@@ -297,7 +297,11 @@ class WsConnection:
             if new is not None:
                 await new.close()
             return None
-        while True:                                  # drain frames already buffered on the old socket
+        # Drain frames already buffered on the old socket. The old socket keeps receiving live
+        # data until it is closed, so the drain is time-bounded; frames that overlap with the
+        # new socket are duplicates and are dropped downstream (sequence/time dedup).
+        drain_deadline = mono_ms() + 500
+        while mono_ms() < drain_deadline:
             try:
                 raw = await asyncio.wait_for(old.recv(), timeout=0.05)
             except (asyncio.TimeoutError, ConnectionClosed):
