@@ -114,3 +114,15 @@ async def test_listing_and_pit(tmp_path):
     assert t.to_pylist() == [{"symbol": "OLDUSDT", "first_date": "2021-03-01", "last_date": "2021-03-04",
                               "n_days": 3, "n_missing_days": 1}]
     await bv.aclose()
+
+
+def test_chunked_conversion_matches_whole_file(monkeypatch):
+    import jevbot.hist.binance_vision as mod
+    rows = "".join(f"{1704067200000 + i * 60000},{i}.5,{i + 1},{i},{i}.7,{i},{1704067259999 + i * 60000},"
+                   f"{i * 2},{i},{i}.1,{i}.2,0\n" for i in range(997))
+    whole = parse_csv(DATASETS["klines"], (KL_HDR + rows).encode())
+    monkeypatch.setattr(mod, "CSV_BLOCK_BYTES", 333)          # forces many line-split chunks
+    chunked = parse_csv(DATASETS["klines"], (KL_HDR + rows).encode())
+    assert chunked.num_rows == 997 and chunked.equals(whole)
+    no_trailing_newline = parse_csv(DATASETS["klines"], (KL_HDR + rows.rstrip("\n")).encode())
+    assert no_trailing_newline.equals(whole)

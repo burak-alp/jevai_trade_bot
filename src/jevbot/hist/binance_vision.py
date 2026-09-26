@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import os
 import random
 import xml.etree.ElementTree as ET
 import zipfile
@@ -104,29 +105,107 @@ def file_key(spec: DatasetSpec, symbol: str, period: str, granularity: str, inte
     return f"{granularity}/{spec.name}/{symbol}/{symbol}-{spec.name}-{period}.zip"
 
 
-def parse_csv(spec: DatasetSpec, raw_csv: bytes) -> pa.Table:
-    first = raw_csv.lstrip()[:1]
-    has_header = bool(first) and not (first.isdigit() or first == b"-")
+CSV_BLOCK_BYTES = 4 << 20          # streaming CSV block; bounds conversion memory
+DOWNLOAD_CHUNK_BYTES = 1 << 20
+
+
+def _has_header(first_bytes: bytes) -> bool:
+    first = first_bytes.lstrip()[:1]
+    return bool(first) and not (first.isdigit() or first == b"-")
+
+
+def _normalize(spec: DatasetSpec, batch: pa.RecordBatch, micros: dict[str, bool]) -> pa.RecordBatch:
+    cols, names = list(batch.columns), list(batch.schema.names)
+    for col in spec.time_columns:        # some files use microseconds; decided once per file (first batch)
+        i = names.index(col)
+        if col not in micros:
+            mx = pc.max(cols[i]).as_py() if len(cols[i]) else None
+            micros[col] = mx is not None and mx > 10**14
+        if micros[col]:
+            cols[i] = pc.divide(cols[i], 1000).cast(i64)
+    for col in spec.datetime_columns:    # "YYYY-mm-dd HH:MM:SS" -> epoch ms
+        i = names.index(col)
+        cols[i] = pc.cast(pc.strptime(cols[i], format="%Y-%m-%d %H:%M:%S", unit="ms"), pa.int64())
+    keep = [i for i, n in enumerate(names) if n not in spec.drop]
+    return pa.RecordBatch.from_arrays([cols[i] for i in keep], names=[names[i] for i in keep])
+
+
+@dataclass
+class ConvertResult:
+    rows: int = 0
+    batches: int = 0
+
+
+def _iter_line_chunks(fh: Any, chunk_bytes: int):
+    """Yield byte chunks of ~``chunk_bytes`` that end on a line boundary."""
+    carry = b""
+    while True:
+        block = fh.read(chunk_bytes)
+        if not block:
+            if carry.strip():
+                yield carry
+            return
+        block = carry + block
+        cut = block.rfind(b"\n")
+        if cut < 0:
+            carry = block
+            continue
+        carry = block[cut + 1:]
+        yield block[:cut + 1]
+
+
+def convert_csv_stream(spec: DatasetSpec, open_fn: Any, out_tmp: Path, metadata: dict[str, str]) -> ConvertResult:
+    """Convert CSV (from an ``open_fn()`` binary file object) to Parquet chunk by chunk.
+
+    The file is read in line-aligned chunks of ``CSV_BLOCK_BYTES`` and each chunk is parsed
+    independently. (pyarrow's ``open_csv`` streaming reader reads far ahead of the consumer
+    and its buffering grows with the file, so it is not used.) Peak memory is bounded by a
+    few chunks, independent of the file size.
+    """
     names = [c for c, _ in spec.columns]
     types = {c: t for c, t in spec.columns}
-    table = pcsv.read_csv(
-        io.BytesIO(raw_csv),
-        read_options=pcsv.ReadOptions(column_names=names, skip_rows=1 if has_header else 0),
-        convert_options=pcsv.ConvertOptions(column_types=types, true_values=["true", "True", "TRUE"],
-                                            false_values=["false", "False", "FALSE"]),
-    )
-    for col in spec.time_columns:           # some newer files use microseconds; normalize to ms
-        arr = table.column(col)
-        if len(arr) and pc.max(arr).as_py() > 10**14:
-            table = table.set_column(table.schema.get_field_index(col), col, pc.divide(arr, 1000).cast(i64))
-    for col in spec.datetime_columns:
-        ts = pc.strptime(table.column(col), format="%Y-%m-%d %H:%M:%S", unit="ms")
-        ms = pc.cast(ts, pa.int64())
-        table = table.set_column(table.schema.get_field_index(col), col, ms)
-    for col in spec.drop:
-        if col in table.column_names:
-            table = table.drop([col])
-    return table
+    co = pcsv.ConvertOptions(column_types=types, true_values=["true", "True", "TRUE"],
+                             false_values=["false", "False", "FALSE"])
+    res = ConvertResult()
+    writer: pq.ParquetWriter | None = None
+    micros: dict[str, bool] = {}
+    first = True
+    try:
+        with open_fn() as fh:
+            for chunk in _iter_line_chunks(fh, CSV_BLOCK_BYTES):
+                skip = 1 if first and _has_header(chunk[:256]) else 0
+                first = False
+                ro = pcsv.ReadOptions(column_names=names, skip_rows=skip, use_threads=False,
+                                      block_size=len(chunk) + 1)
+                table = pcsv.read_csv(io.BytesIO(chunk), read_options=ro, convert_options=co)
+                del chunk
+                for batch in table.to_batches():
+                    nb = _normalize(spec, batch, micros)
+                    if writer is None:
+                        writer = pq.ParquetWriter(str(out_tmp), nb.schema.with_metadata(metadata),
+                                                  compression="zstd", compression_level=3)
+                    writer.write_batch(nb)
+                    res.rows += nb.num_rows
+                res.batches += 1
+                del table
+        if writer is None:               # empty csv: write an empty file with the target schema
+            fields = [pa.field(c, pa.int64() if c in spec.datetime_columns else t)
+                      for c, t in spec.columns if c not in spec.drop]
+            writer = pq.ParquetWriter(str(out_tmp), pa.schema(fields).with_metadata(metadata))
+    finally:
+        if writer is not None:
+            writer.close()
+    return res
+
+
+def parse_csv(spec: DatasetSpec, raw_csv: bytes) -> pa.Table:
+    """Small in-memory helper (tests / tooling) using the same streaming path."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "x.parquet"
+        convert_csv_stream(spec, lambda: io.BytesIO(raw_csv), out, {})
+        return pq.read_table(out).replace_schema_metadata(None)
 
 
 @dataclass
@@ -135,41 +214,90 @@ class DownloadStats:
     skipped_existing: int = 0
     missing: int = 0
     failed: int = 0
+    suspect: int = 0
     rows: int = 0
+    bytes_downloaded: int = 0
     bytes_parquet: int = 0
+    jobs: int = 0
     failures: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Job:
+    spec: DatasetSpec
+    symbol: str
+    period: str
+    granularity: str
+    interval: str | None
+
+
+class NotFound(Exception):
+    pass
 
 
 class BinanceVision:
     def __init__(self, cfg: HistConfig, out_root: Path, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.cfg = cfg
         self.out_root = Path(out_root)
+        self.tmp_dir = self.out_root / "_tmp"
         self._client = httpx.AsyncClient(timeout=cfg.timeout_s, transport=transport, follow_redirects=True,
                                          headers={"User-Agent": "jevbot-hist/0.1"})
         self._sem = asyncio.Semaphore(cfg.concurrency)
+        self.max_inflight = 0
+        self._inflight = 0
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    async def _backoff(self, attempt: int) -> None:
+        await asyncio.sleep(min(30, 2 ** attempt) * (1 + 0.3 * random.random()))
+
     async def _get(self, url: str) -> httpx.Response | None:
-        """GET with retries; returns None for 404."""
+        """Small GET (checksum/listing) with retries; returns None for 404."""
         for attempt in range(1, self.cfg.max_retries + 2):
             try:
                 r = await self._client.get(url)
             except (httpx.TransportError, httpx.TimeoutException) as e:
                 if attempt > self.cfg.max_retries:
                     raise
-                await asyncio.sleep(min(30, 2 ** attempt) * (1 + 0.3 * random.random()))
                 log.warning("hist_retry", url=url, attempt=attempt, err=repr(e))
+                await self._backoff(attempt)
                 continue
             if r.status_code == 404:
                 return None
             if r.status_code == 200:
                 return r
             if (r.status_code >= 500 or r.status_code == 429) and attempt <= self.cfg.max_retries:
-                await asyncio.sleep(min(30, 2 ** attempt) * (1 + 0.3 * random.random()))
+                await self._backoff(attempt)
                 continue
             r.raise_for_status()
+        raise RuntimeError("unreachable")
+
+    async def _stream_to_file(self, url: str, dest: Path) -> tuple[str, int]:
+        """Stream ``url`` to ``dest`` computing sha256 incrementally. Raises NotFound on 404."""
+        for attempt in range(1, self.cfg.max_retries + 2):
+            h = hashlib.sha256()
+            size = 0
+            try:
+                async with self._client.stream("GET", url) as r:
+                    if r.status_code == 404:
+                        raise NotFound(url)
+                    if r.status_code != 200:
+                        if (r.status_code >= 500 or r.status_code == 429) and attempt <= self.cfg.max_retries:
+                            await self._backoff(attempt)
+                            continue
+                        r.raise_for_status()
+                    with open(dest, "wb") as fh:
+                        async for chunk in r.aiter_bytes(DOWNLOAD_CHUNK_BYTES):
+                            fh.write(chunk)
+                            h.update(chunk)
+                            size += len(chunk)
+                return h.hexdigest(), size
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                if attempt > self.cfg.max_retries:
+                    raise
+                log.warning("hist_retry", url=url, attempt=attempt, err=repr(e))
+                await self._backoff(attempt)
         raise RuntimeError("unreachable")
 
     def _out_path(self, spec: DatasetSpec, symbol: str, period: str, interval: str | None) -> Path:
@@ -181,87 +309,134 @@ class BinanceVision:
     def _dataset_root(self, spec: DatasetSpec, interval: str | None) -> Path:
         return self.out_root / spec.name / interval if spec.has_interval and interval else self.out_root / spec.name
 
-    async def fetch_one(self, spec: DatasetSpec, symbol: str, period: str, granularity: str,
-                        interval: str | None, force: bool, stats: DownloadStats) -> None:
-        out = self._out_path(spec, symbol, period, interval)
+    def _record_missing(self, root: Path, key: str, job: Job) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        with open(root / "_missing.jsonl", "ab") as fh:
+            fh.write(orjson.dumps({"key": key, "symbol": job.symbol, "period": job.period, "t": now_ms()}) + b"\n")
+
+    async def fetch_one(self, job: Job, force: bool, stats: DownloadStats) -> None:
+        spec = job.spec
+        out = self._out_path(spec, job.symbol, job.period, job.interval)
         if not force and out.exists() and out.with_name(out.name + ".sha256").exists():
             stats.skipped_existing += 1
             return
-        key = file_key(spec, symbol, period, granularity, interval)
+        key = file_key(spec, job.symbol, job.period, job.granularity, job.interval)
         url = f"{self.cfg.base_url.rstrip('/')}/{PREFIX}/{key}"
-        root = self._dataset_root(spec, interval)
-        async with self._sem:
-            try:
-                r_sum = await self._get(url + ".CHECKSUM")
-                r_zip = await self._get(url) if r_sum is not None else None
-            except Exception as e:
-                stats.failed += 1
-                stats.failures.append(f"{key}: {e!r}")
-                log.error("hist_download_failed", key=key, err=repr(e))
-                return
-        if r_sum is None or r_zip is None:
-            stats.missing += 1
-            root.mkdir(parents=True, exist_ok=True)
-            with open(root / "_missing.jsonl", "ab") as fh:
-                fh.write(orjson.dumps({"key": key, "symbol": symbol, "period": period, "t": now_ms()}) + b"\n")
-            return
+        root = self._dataset_root(spec, job.interval)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        zip_tmp = self.tmp_dir / (key.replace("/", "__") + f".{os.getpid()}.part")
         try:
-            table, src_sha = await asyncio.to_thread(self._convert, spec, r_zip.content, r_sum.text, key)
-            await asyncio.to_thread(self._write, table, out, root, key, url, src_sha, symbol, period)
+            r_sum = await self._get(url + ".CHECKSUM")
+            if r_sum is None:
+                stats.missing += 1
+                self._record_missing(root, key, job)
+                return
+            expected = (r_sum.text.split() or [""])[0].lower()
+            try:
+                actual, size = await self._stream_to_file(url, zip_tmp)
+            except NotFound:
+                stats.missing += 1
+                self._record_missing(root, key, job)
+                return
+            stats.bytes_downloaded += size
+            if not expected or expected != actual:
+                raise ChecksumMismatch(f"{key}: expected {expected[:16]}.. got {actual[:16]}..")
+            rows = await asyncio.to_thread(self._convert_and_publish, spec, zip_tmp, out, root, key, url, actual,
+                                           job, stats)
+            stats.ok += 1
+            stats.rows += rows
+            stats.bytes_parquet += out.stat().st_size if out.exists() else 0
+            if self.cfg.keep_zip:
+                zp = self.out_root / "_zips" / key
+                zp.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(zip_tmp, zp)
         except Exception as e:
             stats.failed += 1
             stats.failures.append(f"{key}: {e!r}")
-            log.error("hist_convert_failed", key=key, err=repr(e))
-            return
-        stats.ok += 1
-        stats.rows += table.num_rows
-        stats.bytes_parquet += out.stat().st_size
-        if self.cfg.keep_zip:
-            zp = self.out_root / "_zips" / key
-            zp.parent.mkdir(parents=True, exist_ok=True)
-            zp.write_bytes(r_zip.content)
+            log.error("hist_job_failed", key=key, err=repr(e))
+        finally:
+            if zip_tmp.exists():
+                zip_tmp.unlink()
 
-    @staticmethod
-    def _convert(spec: DatasetSpec, zip_bytes: bytes, checksum_text: str, key: str) -> tuple[pa.Table, str]:
-        expected = (checksum_text.split() or [""])[0].lower()
-        actual = hashlib.sha256(zip_bytes).hexdigest()
-        if not expected or expected != actual:
-            raise ChecksumMismatch(f"{key}: expected {expected[:16]}.. got {actual[:16]}..")
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+    def _convert_and_publish(self, spec: DatasetSpec, zip_path: Path, out: Path, root: Path, key: str, url: str,
+                             src_sha: str, job: Job, stats: DownloadStats) -> int:
+        with zipfile.ZipFile(zip_path) as zf:
             names = [n for n in zf.namelist() if n.endswith(".csv")]
             if len(names) != 1:
                 raise ValueError(f"{key}: expected one csv in zip, got {names}")
-            raw = zf.read(names[0])
-        return parse_csv(spec, raw), actual
-
-    @staticmethod
-    def _write(table: pa.Table, out: Path, root: Path, key: str, url: str, src_sha: str, symbol: str,
-               period: str) -> None:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        tmp = out.with_name(out.name + ".tmp")
-        table = table.replace_schema_metadata({"source_url": url, "source_sha256": src_sha, "symbol": symbol})
-        pq.write_table(table, tmp, compression="zstd", compression_level=3)
-        tmp.replace(out)
-        digest = sha256_file(out)
-        write_sidecar(out, digest)
-        append_manifest(root, {"file": str(out.relative_to(root)), "rows": table.num_rows,
-                               "bytes": out.stat().st_size, "sha256": digest, "source_key": key,
-                               "source_sha256": src_sha, "symbol": symbol, "period": period,
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_name(out.name + ".tmp")
+            meta = {"source_url": url, "source_sha256": src_sha, "symbol": job.symbol, "period": job.period}
+            res = convert_csv_stream(spec, lambda: zf.open(names[0]), tmp, meta)
+        quality = self.validate(spec, tmp, job)
+        final = out
+        if quality["status"] == "suspect":
+            stats.suspect += 1
+            final = root / "_suspect" / out.relative_to(root)
+            final.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(tmp, final)
+        digest = sha256_file(final)
+        write_sidecar(final, digest)
+        (final.with_name(final.name + ".quality.json")).write_bytes(orjson.dumps(quality, option=orjson.OPT_INDENT_2))
+        append_manifest(root, {"file": str(final.relative_to(root)), "rows": res.rows,
+                               "bytes": final.stat().st_size, "sha256": digest, "source_key": key,
+                               "source_sha256": src_sha, "symbol": job.symbol, "period": job.period,
+                               "quality": quality["status"], "quality_issues": quality["issues"],
                                "finalized_at": now_ms()})
+        if quality["status"] != "ok":
+            log.warning("hist_quality", key=key, status=quality["status"], issues=quality["issues"][:5])
+        return res.rows
 
-    async def download(self, dataset: str, symbols: list[str], start: date, end: date, *,
-                       interval: str | None = None, granularity: str = "daily", force: bool = False) -> DownloadStats:
+    def validate(self, spec: DatasetSpec, path: Path, job: Job) -> dict[str, Any]:
+        """Semantic validation hook; see ``jevbot.hist.validate``."""
+        return {"status": "ok", "issues": [], "checks": {}}
+
+    def iter_jobs(self, dataset: str, symbols: list[str], start: date, end: date, interval: str | None,
+                  granularity: str):
         spec = DATASETS[dataset]
         if granularity == "daily" and not spec.daily:
             granularity = "monthly"
         if granularity == "monthly" and not spec.monthly:
             granularity = "daily"
-        periods = [d.isoformat() for d in daterange(start, end)] if granularity == "daily" else months(start, end)
+        if granularity == "daily":
+            n = (end - start).days + 1
+            for sym in symbols:
+                for i in range(n):
+                    yield Job(spec, sym, (start + timedelta(days=i)).isoformat(), granularity, interval)
+        else:
+            for sym in symbols:
+                for m in months(start, end):
+                    yield Job(spec, sym, m, granularity, interval)
+
+    async def download(self, dataset: str, symbols: list[str], start: date, end: date, *,
+                       interval: str | None = None, granularity: str = "daily", force: bool = False) -> DownloadStats:
+        """Bounded producer/consumer: at most ``concurrency`` jobs in flight and ``2*concurrency`` queued."""
         stats = DownloadStats()
-        jobs = [self.fetch_one(spec, s, p, granularity, interval, force, stats) for s in symbols for p in periods]
-        log.info("hist_download_start", dataset=dataset, symbols=len(symbols), periods=len(periods),
-                 granularity=granularity, interval=interval)
-        await asyncio.gather(*jobs)
+        n = max(1, self.cfg.concurrency)
+        q: asyncio.Queue[Job | None] = asyncio.Queue(maxsize=2 * n)
+
+        async def producer() -> None:
+            for job in self.iter_jobs(dataset, symbols, start, end, interval, granularity):
+                await q.put(job)
+                stats.jobs += 1
+            for _ in range(n):
+                await q.put(None)
+
+        async def worker() -> None:
+            while True:
+                job = await q.get()
+                if job is None:
+                    return
+                self._inflight += 1
+                self.max_inflight = max(self.max_inflight, self._inflight)
+                try:
+                    await self.fetch_one(job, force, stats)
+                finally:
+                    self._inflight -= 1
+
+        log.info("hist_download_start", dataset=dataset, symbols=len(symbols), start=str(start), end=str(end),
+                 granularity=granularity, interval=interval, concurrency=n)
+        await asyncio.gather(producer(), *(worker() for _ in range(n)))
         log.info("hist_download_done", dataset=dataset, **{k: v for k, v in stats.__dict__.items() if k != "failures"})
         return stats
 
