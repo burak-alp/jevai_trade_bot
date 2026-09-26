@@ -242,7 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("loadtest", help="burst load test: multi-process fake exchange -> recorder -> analysis")
     p.add_argument("--workdir", required=True)
     p.add_argument("--scenario", choices=["default", "quick"], default="default")
-    p.add_argument("--fake-workers", type=int, default=3)
+    p.add_argument("--fake-workers", type=int, default=4)
     p.add_argument("--rotate-s", type=float, default=30.0, help="small rotation so files rotate during bursts")
     p.set_defaults(func=cmd_loadtest)
 

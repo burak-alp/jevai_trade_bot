@@ -69,12 +69,14 @@ class Criteria:
 class Harness:
     workdir: Path
     phases: list[Phase] = field(default_factory=lambda: list(DEFAULT_PHASES))
-    fake_workers: int = 3
+    fake_workers: int = 4
     symbols: int = 200
     ws_port: int = 28766
     http_port: int = 28765
     rotate_s: float = 30.0
     health_interval_s: float = 2.0
+    max_streams_per_conn: int = 50      # more public sockets -> load spreads over the fake processes
+    rate_feedback: bool = True          # steer the fake so the offered rate reaches the phase target
     criteria: Criteria = field(default_factory=Criteria)
     python: str = sys.executable
 
@@ -112,6 +114,7 @@ class Harness:
             f"data_dir: {wd / 'data'}\nrun_dir: {wd / 'run'}\n"
             f"logging: {{json: true, file: {wd / 'recorder.log'}}}\n"
             f"binance:\n  rest_base: http://127.0.0.1:{self.http_port}\n  ws:\n    base: ws://127.0.0.1:{self.ws_port}\n"
+            f"    max_streams_per_conn: {self.max_streams_per_conn}\n"
             f"universe:\n  min_quote_vol_24h: 1000000\n  refresh_s: 3600\n"
             f"recorder:\n  health_interval_s: {self.health_interval_s}\n  health_log_interval_s: 30\n"
             f"  smoke:\n    first_event_timeout_s: 15\n"
@@ -123,15 +126,26 @@ class Harness:
         try:
             self._wait_healthy(wd / "run" / "recorder_health.json", 90)
             for ph in self.phases:
-                self._ctl(book_rate_total=ph.rate)
+                request = ph.rate
+                self._ctl(book_rate_total=request)
                 start, sent0 = now_ms(), self._fake_sent()
-                if ph.drop_at_s is not None:
-                    time.sleep(ph.drop_at_s)
-                    epoch = orjson.loads((wd / "control.json").read_bytes())["drop_epoch"] + 1
-                    self._ctl(drop_epoch=epoch)
-                    time.sleep(ph.duration_s - ph.drop_at_s)
-                else:
-                    time.sleep(ph.duration_s)
+                t_end = time.time() + ph.duration_s
+                t_drop = time.time() + ph.drop_at_s if ph.drop_at_s is not None else None
+                last_t, last_sent = time.time(), sent0
+                while time.time() < t_end:
+                    time.sleep(min(2.0, max(0.0, t_end - time.time())))
+                    if t_drop is not None and time.time() >= t_drop:
+                        epoch = orjson.loads((wd / "control.json").read_bytes())["drop_epoch"] + 1
+                        self._ctl(drop_epoch=epoch)
+                        t_drop = None
+                    # closed loop: the fake cannot always produce the requested rate; steer the request so
+                    # the *offered* rate reaches the phase target (bounded to 2x the target)
+                    now_t, sent = time.time(), self._fake_sent()
+                    offered = (sent - last_sent) / max(1e-3, now_t - last_t)
+                    last_t, last_sent = now_t, sent
+                    if offered > 0 and self.rate_feedback:
+                        request = min(2 * ph.rate, max(ph.rate, request * ph.rate / offered))
+                        self._ctl(book_rate_total=request)
                 end, sent1 = now_ms(), self._fake_sent()
                 timeline.append({"phase": ph.name, "kind": ph.kind, "rate": ph.rate, "start": start, "end": end,
                                  "offered_book_msgs": sent1 - sent0,

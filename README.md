@@ -4,7 +4,8 @@ Binance USDⓈ-M Futures üzerinde ~200 pair'i tarayan; deterministic setup'lar�
 Jev (TypeSafe) ile **olasılıksal olarak filtreleyen** ve tüm risk kararlarını deterministic kodda tutan
 araştırma/trading sistemi.
 
-**Durum:** Sprint 0 — public market-data recorder + historical downloader. Gerçek para yok, API key yok, emir yok.
+**Durum:** Sprint 0.1 (hardening) — public market-data recorder + historical downloader. Gerçek para yok, API key yok, emir yok, Jev çağrısı yok.
+Sprint 1'e geçiş kapısı: gerçek Binance'e karşı [`docs/03_live_validation_runbook.md`](docs/03_live_validation_runbook.md).
 
 ## Temel ilkeler
 
@@ -19,6 +20,7 @@ araştırma/trading sistemi.
 
 - [`docs/01_architecture_review.md`](docs/01_architecture_review.md) — mimari eleştirisi, riskler, hedef mimari, roadmap, acceptance criteria
 - [`docs/02_technical_spec.md`](docs/02_technical_spec.md) — implementasyon spesifikasyonu
+- [`docs/03_live_validation_runbook.md`](docs/03_live_validation_runbook.md) — VPS'te smoke / 1 saat / 24 saat doğrulama komutları
 
 ---
 
@@ -41,6 +43,8 @@ jevbot smoke                        # WS route'ları + REST: bağlantı, SUBSCRI
 jevbot record                       # config/base.yaml ile sürekli kayıt (Ctrl-C / SIGTERM = graceful shutdown)
 jevbot record --duration 900        # 15 dk test koşusu
 jevbot verify                       # Parquet sha256 + manifest + okunabilirlik kontrolü
+jevbot recording-report             # throughput, CPU/RAM, latency, gaps, disk MB/h, integrity, acceptance
+jevbot compact                      # biten saatlerin küçük part'larını birleştir (doğrulamalı, atomik)
 jevbot config --set recorder.depth.top_n_by_volume=10   # çözülmüş config'i göster
 ```
 
@@ -84,8 +88,16 @@ run/recorder_health.json, run/smoke_report.json
 | `health` | durum, msg/s, CPU, RSS, freshness, yazılan satır/byte | 10 s |
 | `universe` | point-in-time sembol metadata + universe üyeliği + dışlanma nedeni | saatlik |
 
-Şemalar: [`src/jevbot/recorder/schemas.py`](src/jevbot/recorder/schemas.py) (`rec.v1`, Parquet metadata'sında).
-Dosyalar `sink.rotate_s` (10 dk) pencerelerinde döner; crash'te en fazla açık pencere + `flush_s` kaybolur.
+Şemalar: [`src/jevbot/recorder/schemas.py`](src/jevbot/recorder/schemas.py) (`rec.v2`, Parquet metadata'sında).
+
+**Event-time partitioning:** her satır dataset'in zaman kolonuna (`TIME_COLUMN`) göre `sink.rotate_s` (180 s)
+penceresine yazılır; pencere `window_end + late_grace_s` (60 s) sonra kapanır. Geç gelen event'ler ve REST
+backfill kendi pencerelerinin ek part'ına gider; manifest'te `window_start/window_end` ile `t_min/t_max` tutarlıdır.
+Crash'te en fazla açık pencereler (≈ rotate + grace) + `flush_s` kaybolur.
+
+**Compaction:** `jevbot compact` biten saatlerin part'larını (symbol, zaman) sıralı tek dosyada birleştirir;
+kaynaklar önce doğrulanır (sha256/manifest/okunabilirlik), yeni dosya fsync + sha256 + atomik rename + geri
+okuma ile kontrol edilir, kaynaklar ancak bundan sonra silinir (manifest tombstone + crash journal).
 
 ### Sağlık ve izleme
 
@@ -134,6 +146,16 @@ jevbot download --dataset pit-listing --interval 1m
 
 Var olan dosyalar atlanır (`--force` ile yeniden). 404 = o dönemde sembol yok → `_missing.jsonl`.
 
+Ölçeklenebilirlik: işler bounded queue + sabit worker havuzu ile üretilir/tüketilir; ZIP'ler geçici dosyaya
+stream edilir (sha256 incremental), CSV 4 MB'lık satır hizalı parçalarla Parquet'e çevrilir — bellek dosya
+boyutundan bağımsızdır.
+
+**Semantic validation:** her dosya için `ok | warn | suspect` kalite raporu (`*.quality.json` + manifest):
+klines (monotonic/duplicate/continuity/OHLC/volume), metrics (5m cadence, create_time kayması, duplicate),
+bookDepth (frozen/constant band, cadence, kümülatif derinlik), funding (duplicate, delist sonrası gözlem),
+aggTrades (streaming id/zaman kontrolleri). `suspect` dosyalar silinmez, `_suspect/` altına taşınır;
+`jevbot.hist.catalog.list_files` bunları varsayılan olarak döndürmez (replay kullanmaz).
+
 ## İnternetsiz geliştirme: fake exchange
 
 ```bash
@@ -145,6 +167,16 @@ curl "localhost:18765/__admin/skip_klines?symbol=BTCUSDT&n=2"  # kline gap → R
 ```
 
 Fake exchange sentetik veri üretir; performans ölçümleri gerçek Binance yükünü yalnızca yaklaşık temsil eder.
+
+Burst load test (çok process'li fake + gerçek recorder process + faz analizi, ~13 dk):
+
+```bash
+jevbot loadtest --workdir /tmp/lt --scenario default    # 5k×5dk, 15k×2dk, 30k×30s, burst ortasında drop, 30 s rotation
+jevbot loadtest --workdir /tmp/lt-q --scenario quick    # ~2 dk
+```
+
+Her burst fazı için: offered/received oranı, feed latency p99'un sınırlı ve büyümüyor olması, sink backlog /
+writer queue sınırı, sonrasında baseline'a dönüş, reconnect süresi; rapor `loadtest_report.{md,json}`.
 
 ## Güvenlik
 

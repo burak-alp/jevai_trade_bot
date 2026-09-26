@@ -278,10 +278,11 @@ class FakeBinance:
         while True:
             await asyncio.sleep(tick)
             syms = self._subscribed("@bookTicker")
-            if not syms:
+            if not syms or _now() < self.silence_until:
                 continue
             t = _now()
             per_weight = self.cfg.book_rate_total * tick / self.total_book_weight
+            batches: dict[_Client, list[bytes]] = {}
             for s in syms:
                 acc[s] = acc.get(s, 0.0) + per_weight * self.book_weight.get(s, 1.0)
                 n = int(acc[s])
@@ -290,7 +291,7 @@ class FakeBinance:
                 acc[s] -= n
                 stream = f"{s.lower()}@bookTicker"
                 subs = self._subscribers(stream)
-                if not subs or _now() < self.silence_until:
+                if not subs:
                     continue
                 mid = self._book_mid(s, t)
                 half = mid * self._spread[s]
@@ -299,14 +300,19 @@ class FakeBinance:
                     u = self._next_update_id(t)
                     frame = (f'{{"stream":"{stream}","data":{{"e":"bookTicker","u":{u},"E":{t},"T":{t - 1},'
                              f'"s":"{s}","b":"{bid}","B":"{1 + 10 * random.random():.3f}","a":"{ask}",'
-                             f'"A":"{1 + 10 * random.random():.3f}"}}}}')
+                             f'"A":"{1 + 10 * random.random():.3f}"}}}}').encode()
                     for c in subs:
-                        try:
-                            await c.ws.send(frame)
-                            self.stats["ws_msgs"] += 1
-                            self.stats["book_msgs"] += 1
-                        except ConnectionClosed:
-                            self.clients.discard(c)
+                        batches.setdefault(c, []).append(frame)
+            for c, frames in batches.items():
+                # one send_context per client and tick: frames are written back to back, then drained once
+                try:
+                    async with c.ws.send_context():
+                        for f in frames:
+                            c.ws.protocol.send_text(f)
+                    self.stats["ws_msgs"] += len(frames)
+                    self.stats["book_msgs"] += len(frames)
+                except ConnectionClosed:
+                    self.clients.discard(c)
 
     async def _kline_loop(self) -> None:
         last_closed = _now() // MINUTE * MINUTE - MINUTE
