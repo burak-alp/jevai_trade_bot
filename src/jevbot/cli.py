@@ -87,6 +87,44 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0 if rep.ok else 5
 
 
+def cmd_download(args: argparse.Namespace) -> int:
+    from datetime import date
+    from pathlib import Path
+
+    from jevbot.hist.binance_vision import DATASETS, BinanceVision
+
+    cfg = _load(args)
+    out_root = Path(args.out) if args.out else Path(cfg.data_dir) / "hist" / "um"
+
+    async def main() -> int:
+        bv = BinanceVision(cfg.hist, out_root)
+        try:
+            if args.dataset == "pit-listing":
+                syms = args.symbols.split(",") if args.symbols and args.symbols != "ALL" else None
+                table = await bv.pit_listing(args.interval or "1m", syms)
+                sys.stdout.write(orjson.dumps({"symbols": table.num_rows}).decode() + "\n")
+                return 0
+            if args.dataset not in DATASETS:
+                sys.stderr.write(f"unknown dataset {args.dataset}; choose from {sorted(DATASETS)} or pit-listing\n")
+                return 2
+            if not (args.start and args.end and args.symbols):
+                sys.stderr.write("--symbols, --start and --end are required\n")
+                return 2
+            if args.symbols == "ALL":
+                symbols = await bv.list_symbols(args.dataset, args.granularity)
+            else:
+                symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+            stats = await bv.download(args.dataset, symbols, date.fromisoformat(args.start),
+                                      date.fromisoformat(args.end), interval=args.interval,
+                                      granularity=args.granularity, force=args.force)
+            sys.stdout.write(orjson.dumps(stats.__dict__, option=orjson.OPT_INDENT_2).decode() + "\n")
+            return 0 if stats.failed == 0 else 6
+        finally:
+            await bv.aclose()
+
+    return _run_async(main)
+
+
 def cmd_fake_exchange(args: argparse.Namespace) -> int:
     from jevbot.core.logging import setup_logging
     from jevbot.testing.fake_binance import FakeConfig, serve_forever
@@ -123,6 +161,20 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.add_argument("--root", default=None, help="directory to verify (default: data_dir)")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("download", help="download historical data from data.binance.vision (futures/um)")
+    _add_common(p)
+    p.add_argument("--dataset", required=True,
+                   help="klines | markPriceKlines | indexPriceKlines | premiumIndexKlines | aggTrades | metrics | "
+                        "fundingRate | bookDepth | pit-listing")
+    p.add_argument("--symbols", default=None, help="comma separated, or ALL (from the bucket listing)")
+    p.add_argument("--start", default=None, help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--end", default=None, help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--interval", default=None, help="kline interval, e.g. 1m (kline-type datasets)")
+    p.add_argument("--granularity", choices=["daily", "monthly"], default="daily")
+    p.add_argument("--out", default=None, help="output root (default: <data_dir>/hist/um)")
+    p.add_argument("--force", action="store_true", help="re-download files that already exist")
+    p.set_defaults(func=cmd_download)
 
     p = sub.add_parser("fake-exchange", help="local fake Binance WS/REST for tests and load runs (dev only)")
     p.add_argument("--symbols", type=int, default=200)
