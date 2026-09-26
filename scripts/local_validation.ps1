@@ -28,9 +28,9 @@ Write-Host "smoke exit=$smoke"
 if ($smoke -ne 0) { Write-Host "SMOKE FAILED - stop here, report $out"; exit 3 }
 
 $log = "logs/record-$ts.jsonl"
-jevbot record @cfg --duration $Seconds --set "logging.file=$log" 2> "$out/record.stderr"; "exit=$LASTEXITCODE" | Set-Content "$out/record_exit.txt"
-jevbot verify @cfg *> "$out/verify.json"; "verify exit=$LASTEXITCODE" | Add-Content "$out/record_exit.txt"
-jevbot recording-report @cfg *> "$out/report.stdout"; "report exit=$LASTEXITCODE" | Add-Content "$out/record_exit.txt"
+jevbot record @cfg --duration $Seconds --set "logging.file=$log" 2> "$out/record.stderr"; $recExit = $LASTEXITCODE; "exit=$recExit" | Set-Content "$out/record_exit.txt"
+jevbot verify @cfg *> "$out/verify.json"; $verExit = $LASTEXITCODE; "verify exit=$verExit" | Add-Content "$out/record_exit.txt"
+jevbot recording-report @cfg *> "$out/report.stdout"; $repExit = $LASTEXITCODE; "report exit=$repExit" | Add-Content "$out/record_exit.txt"
 Copy-Item "$run/recording_report.md", "$run/recording_report.json", "$run/smoke_report.json" $out -ErrorAction SilentlyContinue
 Get-Content $log -Tail 200 | Set-Content "$out/record_tail.jsonl"
 Select-String -Path $log -Pattern '"level":"(WARNING|ERROR)"' | Select-Object -First 300 | ForEach-Object { $_.Line } | Set-Content "$out/warnings.jsonl"
@@ -55,4 +55,7 @@ if (-not $NoHist) {
     "== $($_.FullName)"; (Get-Content $_.FullName -Raw).Substring(0, [Math]::Min(1500, $_.Length))
   } | Set-Content "$out/hist_quality.txt"
 }
+if ($recExit -ne 0 -or $verExit -ne 0 -or $repExit -ne 0) { exit 4 }
+$acceptance = (Get-Content "$run/recording_report.json" -Raw | ConvertFrom-Json).acceptance
+if ($acceptance.PSObject.Properties.Value -contains $false) { exit 4 }
 Write-Host "done -> $out  (now write $out/LOCAL_REPORT.md)"
