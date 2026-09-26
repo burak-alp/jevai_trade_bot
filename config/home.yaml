@@ -5,6 +5,6 @@ binance:
   ws:
     compression: true               # permessage-deflate; JSON shrinks several-fold if the server accepts it
 recorder:
-  book_ticker_max_symbols: 100      # bookTicker is ~90 % of traffic; top-100 by volume
+  book_ticker_max_symbols: 50       # reduce the busy public socket after the top-100 profile stalled
   depth:
     top_n_by_volume: 10

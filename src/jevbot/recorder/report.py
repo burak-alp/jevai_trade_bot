@@ -87,6 +87,7 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
 
     rep["throughput"] = {"msgs_per_s": dist("msgs_per_s"), "msgs_per_s_public": dist("msgs_per_s_public"),
                          "msgs_per_s_market": dist("msgs_per_s_market"), "bytes_per_s": dist("bytes_per_s"),
+                         "bytes_note": "decoded WebSocket payload bytes; not on-wire bandwidth",
                          "writer_rows_per_s": dist("writer_rows_per_s")}
     rep["process"] = {"cpu_pct": dist("cpu_pct"), "rss_mb": dist("rss_mb"),
                       "loop_lag_p99_ms": dist("loop_lag_p99_ms"), "loop_lag_max_ms": _q([h["loop_lag_max_ms"] for h in steady], 1.0),
@@ -147,8 +148,6 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
         "corr_lat_p99_vs_bytes_per_s": pearson([h["bytes_per_s"] for h in steady], [h["lat_p99_ms"] for h in steady]),
         "corr_lat_p99_vs_msgs_per_s": pearson([h["msgs_per_s"] for h in steady], [h["lat_p99_ms"] for h in steady]),
         "intervals_ok_share_clock_corrected": round(corrected_ok, 4),
-        "reading": "loop lag ~0 in stalls => not the recorder; high corr with bytes/s => bandwidth/queueing; "
-                   "all streams stalling together => network path",
     }
     rep["feed_stalls"] = {"intervals_ok_share": round(good_share, 4), "episodes": episodes,
                           "longest_s": max((e["duration_s"] for e in episodes), default=0.0)}

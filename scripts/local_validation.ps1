@@ -2,10 +2,13 @@
 # Usage (repo root, venv active):  .\scripts\local_validation.ps1 [-Seconds 3600] [-NoHist] [-BaseOnly]
 # Default profile: config/base.yaml + config/home.yaml (bandwidth-limited home PC profile).
 param([int]$Seconds = 3600, [switch]$NoHist, [switch]$BaseOnly)
+$ts = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$data = "data-$ts"
+$run = "run-$ts"
 $cfg = @("--config", "config/base.yaml")
 if (-not $BaseOnly) { $cfg += @("--config", "config/home.yaml") }
+$cfg += @("--set", "data_dir=./$data", "--set", "run_dir=./$run")
 $ErrorActionPreference = "Continue"
-$ts = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 $out = "reports/local/$ts"
 New-Item -ItemType Directory -Force -Path $out, logs | Out-Null
 Write-Host "bundle -> $out"
@@ -27,10 +30,10 @@ $log = "logs/record-$ts.jsonl"
 jevbot record @cfg --duration $Seconds --set "logging.file=$log" 2> "$out/record.stderr"; "exit=$LASTEXITCODE" | Set-Content "$out/record_exit.txt"
 jevbot verify @cfg *> "$out/verify.json"; "verify exit=$LASTEXITCODE" | Add-Content "$out/record_exit.txt"
 jevbot recording-report @cfg *> "$out/report.stdout"; "report exit=$LASTEXITCODE" | Add-Content "$out/record_exit.txt"
-Copy-Item run/recording_report.md, run/recording_report.json, run/smoke_report.json $out -ErrorAction SilentlyContinue
+Copy-Item "$run/recording_report.md", "$run/recording_report.json", "$run/smoke_report.json" $out -ErrorAction SilentlyContinue
 Get-Content $log -Tail 200 | Set-Content "$out/record_tail.jsonl"
 Select-String -Path $log -Pattern '"level":"(WARNING|ERROR)"' | Select-Object -First 300 | ForEach-Object { $_.Line } | Set-Content "$out/warnings.jsonl"
-Get-ChildItem data/raw -Directory | ForEach-Object {
+Get-ChildItem "$data/raw" -Directory | ForEach-Object {
   "{0}`t{1:N1} MB" -f $_.Name, ((Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
 } | Set-Content "$out/disk.txt"
 
@@ -45,9 +48,9 @@ if (-not $NoHist) {
     jevbot download @cfg --dataset bookDepth --symbols BTCUSDT --start $d2 --end $d2
     jevbot download @cfg --dataset aggTrades --symbols BTCUSDT --start $d2 --end $d2
     jevbot download @cfg --dataset fundingRate --symbols BTCUSDT --start $m1 --end $m2
-    jevbot verify @cfg --root data/hist/um
+    jevbot verify @cfg --root "$data/hist/um"
   } *> "$out/hist.txt"
-  Get-ChildItem data/hist/um -Recurse -Filter *.quality.json | Select-Object -First 20 | ForEach-Object {
+  Get-ChildItem "$data/hist/um" -Recurse -Filter *.quality.json | Select-Object -First 20 | ForEach-Object {
     "== $($_.FullName)"; (Get-Content $_.FullName -Raw).Substring(0, [Math]::Min(1500, $_.Length))
   } | Set-Content "$out/hist_quality.txt"
 }
