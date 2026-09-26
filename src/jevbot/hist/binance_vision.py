@@ -33,6 +33,7 @@ import pyarrow.parquet as pq
 from jevbot.core.config import HistConfig
 from jevbot.core.logging import get_logger
 from jevbot.core.time import now_ms
+from jevbot.hist.validate import Context, validate_file
 from jevbot.recorder.integrity import append_manifest, sha256_file, write_sidecar
 
 log = get_logger(__name__)
@@ -245,6 +246,7 @@ class BinanceVision:
         self._sem = asyncio.Semaphore(cfg.concurrency)
         self.max_inflight = 0
         self._inflight = 0
+        self._pit: dict[str, str] | None = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -387,9 +389,22 @@ class BinanceVision:
             log.warning("hist_quality", key=key, status=quality["status"], issues=quality["issues"][:5])
         return res.rows
 
+    def _last_listed(self, symbol: str) -> str | None:
+        if self._pit is None:
+            self._pit = {}
+            for f in sorted((self.out_root / "_pit").glob("symbol_listing-*.parquet")):
+                for r in pq.read_table(f).to_pylist():
+                    self._pit[r["symbol"]] = max(self._pit.get(r["symbol"], ""), r["last_date"])
+        return self._pit.get(symbol)
+
     def validate(self, spec: DatasetSpec, path: Path, job: Job) -> dict[str, Any]:
-        """Semantic validation hook; see ``jevbot.hist.validate``."""
-        return {"status": "ok", "issues": [], "checks": {}}
+        """Semantic validation (``jevbot.hist.validate``); never raises, a crash marks the file suspect."""
+        ctx = Context(symbol=job.symbol, period=job.period, interval=job.interval,
+                      last_listed_date=self._last_listed(job.symbol) if spec.name == "fundingRate" else None)
+        try:
+            return validate_file(spec.name, path, ctx)
+        except Exception as e:
+            return {"status": "suspect", "issues": [f"suspect:validator_error:{e!r}"], "checks": {}}
 
     def iter_jobs(self, dataset: str, symbols: list[str], start: date, end: date, interval: str | None,
                   granularity: str):
