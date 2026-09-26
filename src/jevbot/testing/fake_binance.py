@@ -62,6 +62,9 @@ class FakeConfig:
     ws_port: int = 0
     http_port: int = 0
     weight_limit: int = 2400
+    reuse_port: bool = False              # several fake processes can share the ports (load tests)
+    control_file: str | None = None       # JSON {"book_rate_total", "drop_epoch", "silence_until"} polled 5x/s
+    stats_file: str | None = None         # per-process counters written every second
 
 
 @dataclass(eq=False)
@@ -88,6 +91,11 @@ class FakeBinance:
         self.stats: dict[str, int] = {"ws_msgs": 0, "rest_requests": 0, "ws_connections": 0, "subscribes": 0,
                                       "wrong_route_streams": 0}
         self._update_id = 1
+        self._drop_epoch = 0
+        self.total_book_weight = sum(self.book_weight.values())
+        self._spread = {s: 0.00005 + 0.0002 * _h("sp", s) for s in self.symbols}
+        self._mid_cache: dict[str, tuple[int, float]] = {}
+        self.stats["book_msgs"] = 0
         self._tasks: list[asyncio.Task[Any]] = []
         self._ws_server: Any = None
         self._http_server: asyncio.base_events.Server | None = None
@@ -125,14 +133,50 @@ class FakeBinance:
     # -- lifecycle --------------------------------------------------------------
 
     async def start(self) -> None:
+        rp = self.cfg.reuse_port or None
         self._ws_server = await serve(self._ws_handler, self.cfg.ws_host, self.cfg.ws_port, max_queue=None,
-                                      compression=None)
+                                      compression=None, reuse_port=rp)
         self.ws_port = self._ws_server.sockets[0].getsockname()[1]
-        self._http_server = await asyncio.start_server(self._http_handler, self.cfg.ws_host, self.cfg.http_port)
+        self._http_server = await asyncio.start_server(self._http_handler, self.cfg.ws_host, self.cfg.http_port,
+                                                       reuse_port=rp)
         self.http_port = self._http_server.sockets[0].getsockname()[1]
-        for coro in (self._book_loop(), self._kline_loop(), self._mark_loop(), self._depth_loop(),
-                     self._liquidation_loop()):
+        loops = [self._book_loop(), self._kline_loop(), self._mark_loop(), self._depth_loop(),
+                 self._liquidation_loop()]
+        if self.cfg.control_file:
+            loops.append(self._control_loop())
+        if self.cfg.stats_file:
+            loops.append(self._stats_loop())
+        for coro in loops:
             self._tasks.append(asyncio.create_task(coro))
+
+    async def _control_loop(self) -> None:
+        from pathlib import Path
+
+        path = Path(self.cfg.control_file or "")
+        while True:
+            await asyncio.sleep(0.2)
+            try:
+                ctl = orjson.loads(path.read_bytes())
+            except (OSError, orjson.JSONDecodeError):
+                continue
+            self.cfg.book_rate_total = float(ctl.get("book_rate_total", self.cfg.book_rate_total))
+            self.silence_until = int(ctl.get("silence_until", self.silence_until))
+            epoch = int(ctl.get("drop_epoch", 0))
+            if epoch > self._drop_epoch:
+                self._drop_epoch = epoch
+                await self.drop_all()
+
+    async def _stats_loop(self) -> None:
+        import os
+        from pathlib import Path
+
+        path = Path(self.cfg.stats_file or "")
+        while True:
+            await asyncio.sleep(1.0)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_bytes(orjson.dumps({"t": _now(), "pid": os.getpid(), **self.stats,
+                                          "clients": len(self.clients)}))
+            os.replace(tmp, path)
 
     async def stop(self) -> None:
         for t in self._tasks:
@@ -215,6 +259,19 @@ class FakeBinance:
                     out.add(s.split("@", 1)[0].upper())
         return sorted(out)
 
+    def _next_update_id(self, t: int) -> int:
+        # time-based so ids stay monotonic when a stream reconnects to another fake process
+        self._update_id = max(self._update_id + 1, t * 1000)
+        return self._update_id
+
+    def _book_mid(self, s: str, t: int) -> float:
+        k = t // 50
+        c = self._mid_cache.get(s)
+        if c is None or c[0] != k:
+            c = (k, self.price(s, t))
+            self._mid_cache[s] = c
+        return c[1]
+
     async def _book_loop(self) -> None:
         tick = 0.01
         acc: dict[str, float] = {}
@@ -223,19 +280,33 @@ class FakeBinance:
             syms = self._subscribed("@bookTicker")
             if not syms:
                 continue
-            total_w = sum(self.book_weight.get(s, 1.0) for s in syms)
             t = _now()
+            per_weight = self.cfg.book_rate_total * tick / self.total_book_weight
             for s in syms:
-                acc[s] = acc.get(s, 0.0) + self.cfg.book_rate_total * tick * self.book_weight.get(s, 1.0) / total_w
-                while acc[s] >= 1.0:
-                    acc[s] -= 1.0
-                    px = self.price(s, t)
-                    half = px * (0.00005 + 0.0002 * _h("sp", s))
-                    self._update_id += 1
-                    await self._send(f"{s.lower()}@bookTicker", {
-                        "e": "bookTicker", "u": self._update_id, "E": t, "T": t - 1, "s": s,
-                        "b": self._fmt(px - half), "B": self._fmt(1 + 10 * random.random()),
-                        "a": self._fmt(px + half), "A": self._fmt(1 + 10 * random.random())})
+                acc[s] = acc.get(s, 0.0) + per_weight * self.book_weight.get(s, 1.0)
+                n = int(acc[s])
+                if n <= 0:
+                    continue
+                acc[s] -= n
+                stream = f"{s.lower()}@bookTicker"
+                subs = self._subscribers(stream)
+                if not subs or _now() < self.silence_until:
+                    continue
+                mid = self._book_mid(s, t)
+                half = mid * self._spread[s]
+                bid, ask = f"{mid - half:.8f}", f"{mid + half:.8f}"
+                for _ in range(n):
+                    u = self._next_update_id(t)
+                    frame = (f'{{"stream":"{stream}","data":{{"e":"bookTicker","u":{u},"E":{t},"T":{t - 1},'
+                             f'"s":"{s}","b":"{bid}","B":"{1 + 10 * random.random():.3f}","a":"{ask}",'
+                             f'"A":"{1 + 10 * random.random():.3f}"}}}}')
+                    for c in subs:
+                        try:
+                            await c.ws.send(frame)
+                            self.stats["ws_msgs"] += 1
+                            self.stats["book_msgs"] += 1
+                        except ConnectionClosed:
+                            self.clients.discard(c)
 
     async def _kline_loop(self) -> None:
         last_closed = _now() // MINUTE * MINUTE - MINUTE
@@ -283,10 +354,10 @@ class FakeBinance:
                 step = px * 0.0001
                 bids = [[self._fmt(px - (i + 1) * step), self._fmt(1 + 5 * random.random())] for i in range(20)]
                 asks = [[self._fmt(px + (i + 1) * step), self._fmt(1 + 5 * random.random())] for i in range(20)]
-                self._update_id += 1
+                u = self._next_update_id(t)
                 await self._send(f"{c_sym.lower()}@depth20@500ms", {
-                    "e": "depthUpdate", "E": t, "T": t - 2, "s": c_sym, "U": self._update_id - 1,
-                    "u": self._update_id, "pu": self._update_id - 2, "b": bids, "a": asks})
+                    "e": "depthUpdate", "E": t, "T": t - 2, "s": c_sym, "U": u - 1,
+                    "u": u, "pu": u - 2, "b": bids, "a": asks})
 
     async def _liquidation_loop(self) -> None:
         while True:

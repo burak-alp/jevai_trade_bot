@@ -159,13 +159,28 @@ def cmd_download(args: argparse.Namespace) -> int:
     return _run_async(main)
 
 
+def cmd_loadtest(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.core.logging import setup_logging
+    from jevbot.testing.loadtest import DEFAULT_PHASES, QUICK_PHASES, Harness, to_markdown
+
+    setup_logging("INFO", json=False)
+    h = Harness(Path(args.workdir), phases=list(QUICK_PHASES if args.scenario == "quick" else DEFAULT_PHASES),
+                fake_workers=args.fake_workers, rotate_s=args.rotate_s)
+    rep = h.run()
+    sys.stdout.write(to_markdown(rep))
+    return 0 if rep["ok"] else 8
+
+
 def cmd_fake_exchange(args: argparse.Namespace) -> int:
     from jevbot.core.logging import setup_logging
     from jevbot.testing.fake_binance import FakeConfig, serve_forever
 
     setup_logging("WARNING", json=True)
     cfg = FakeConfig(n_symbols=args.symbols, book_rate_total=args.book_rate, ws_port=args.ws_port,
-                     http_port=args.http_port)
+                     http_port=args.http_port, reuse_port=args.reuse_port, control_file=args.control_file,
+                     stats_file=args.stats_file)
     try:
         _run_async(lambda: serve_forever(cfg))
     except KeyboardInterrupt:
@@ -224,11 +239,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="re-download files that already exist")
     p.set_defaults(func=cmd_download)
 
+    p = sub.add_parser("loadtest", help="burst load test: multi-process fake exchange -> recorder -> analysis")
+    p.add_argument("--workdir", required=True)
+    p.add_argument("--scenario", choices=["default", "quick"], default="default")
+    p.add_argument("--fake-workers", type=int, default=3)
+    p.add_argument("--rotate-s", type=float, default=30.0, help="small rotation so files rotate during bursts")
+    p.set_defaults(func=cmd_loadtest)
+
     p = sub.add_parser("fake-exchange", help="local fake Binance WS/REST for tests and load runs (dev only)")
     p.add_argument("--symbols", type=int, default=200)
     p.add_argument("--book-rate", type=float, default=1500.0, help="bookTicker msgs/s across all symbols")
     p.add_argument("--ws-port", type=int, default=18766)
     p.add_argument("--http-port", type=int, default=18765)
+    p.add_argument("--reuse-port", action="store_true", help="allow several fake processes on the same ports")
+    p.add_argument("--control-file", default=None, help="JSON control file polled for rate/drop/silence")
+    p.add_argument("--stats-file", default=None, help="write per-process counters here every second")
     p.set_defaults(func=cmd_fake_exchange)
     return parser
 
