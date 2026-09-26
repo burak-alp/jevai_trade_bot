@@ -160,3 +160,31 @@ async def test_ws_rotation_make_before_break(fake, tmp_path):
         assert conn.stats.msgs > n                           # data keeps flowing after rotation
     finally:
         await conn.stop()
+
+
+async def test_smoke_ping_survives_busy_stream(tmp_path):
+    """Regression (real Binance, 2026-09-26): the pong was never read while a busy bookTicker
+    stream filled the client's frame queue during the ping -> TimeoutError at stage 'ping'."""
+    from jevbot.testing.fake_binance import FakeBinance, FakeConfig
+    fb = FakeBinance(FakeConfig(n_symbols=20, n_extra_symbols=5, book_rate_total=20_000.0))
+    await fb.start()
+    try:
+        for _ in range(3):
+            rep = await run_smoke(make_cfg(fb, tmp_path))
+            public = next(c for c in rep.checks if c.name == "ws:public")
+            assert public.ok and public.detail["stage"] == "done", public.detail
+            assert public.detail["ping_rtt_ms"] < 5000
+    finally:
+        await fb.stop()
+
+
+async def test_recorder_stops_with_exit_9_on_writer_failure(fake, tmp_path, monkeypatch):
+    from jevbot.recorder.recorder import EXIT_WRITER_FAILED
+    from jevbot.recorder.sinks import SinkManager
+
+    def broken_write(self, name, key, table):
+        raise OSError(9, "Bad file descriptor (simulated)")
+    monkeypatch.setattr(SinkManager, "_write", broken_write)
+    cfg = make_cfg(fake, tmp_path)
+    code = await asyncio.wait_for(Recorder(cfg).run(duration_s=30), timeout=25)
+    assert code == EXIT_WRITER_FAILED

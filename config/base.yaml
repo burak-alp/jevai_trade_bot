@@ -51,7 +51,7 @@ binance:
 universe:
   quote_asset: USDT
   contract_type: PERPETUAL
-  min_quote_vol_24h: 20000000
+  min_quote_vol_24h: 5000000        # recorder records broadly (live: only ~100 symbols >= 20M); the scanner filters stricter
   max_symbols: 200
   exit_rank: 230                    # hysteresis: a member leaves only when rank > exit_rank
   min_listing_age_days: 14

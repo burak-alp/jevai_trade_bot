@@ -96,6 +96,14 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
                                      "p95_of_p95": _q([h["lat_p95_ms"] for h in steady], 0.95),
                                      "max_p99": _q([h["lat_p99_ms"] for h in steady], 1.0),
                                      "max": _q([h["lat_max_ms"] for h in steady], 1.0)}
+    offs = [h["clock_offset_ms"] for h in steady]
+    off_med = _q(offs, 0.5)
+    rep["clock"] = {"offset_ms_median": off_med, "offset_ms_max_abs": _q([abs(o) for o in offs if o == o], 1.0),
+                    "note": "offset = exchange - local; true latency ~= raw (t_recv - t_event) + offset"}
+    if off_med is not None:
+        f = rep["feed_latency_ms_health"]
+        rep["feed_latency_ms_offset_corrected"] = {k: (round(v + off_med, 2) if v is not None else None)
+                                                   for k, v in f.items()}
     lat = _read(raw, "latency_1m", since, until).to_pylist()
     by = defaultdict(list)
     for r in lat:
@@ -164,6 +172,7 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
         "no_schema_errors": rep["errors"]["schema_errors"] == 0,
         "no_unhealthy": rep["status_counts"].get("UNHEALTHY", 0) == 0,
         "kline_complete": rep["kline_completeness"]["cells_missing"] == 0,
+        "clock_offset_under_500ms": (rep["clock"]["offset_ms_max_abs"] or 0) < 500,
         "feed_lag_p99_under_2s": (rep["feed_latency_ms_health"]["max_p99"] or 0) < 2000,
         "loop_lag_p99_under_500ms": (rep["process"]["loop_lag_p99_ms"]["max"] or 0) < 500,
     }
@@ -188,6 +197,10 @@ def to_markdown(rep: dict[str, Any]) -> str:
         ("event-loop lag p99 max (ms)", p["loop_lag_p99_ms"]["max"]),
         ("feed latency p50 / p95 / max-p99 (ms)", f"{rep['feed_latency_ms_health']['p50_of_p50']} / "
          f"{rep['feed_latency_ms_health']['p95_of_p95']} / {rep['feed_latency_ms_health']['max_p99']}"),
+        ("clock offset median / max abs (ms)", f"{rep['clock']['offset_ms_median']} / {rep['clock']['offset_ms_max_abs']}"),
+        ("feed latency offset-corrected p50 / max-p99 (ms)",
+         f"{rep.get('feed_latency_ms_offset_corrected', {}).get('p50_of_p50')} / "
+         f"{rep.get('feed_latency_ms_offset_corrected', {}).get('max_p99')}"),
         ("schema errors", rep["errors"]["schema_errors"]),
         ("duplicates / invalid dropped", f"{rep['errors']['duplicates_dropped']} / {rep['errors']['invalid_dropped']}"),
         ("gaps", rep["gaps"]["by_kind"]),

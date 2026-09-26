@@ -61,7 +61,7 @@ class HealthMonitor:
                  book_fresh: int, book_expected: int, sink: Any, clock_offset_ms: float | None,
                  rest_weights: Any, writer_error: BaseException | None,
                  perf: dict[str, Any] | None = None, lag_warn_ms: float = 2000.0,
-                 loop_lag_warn_ms: float = 500.0) -> dict[str, Any]:
+                 loop_lag_warn_ms: float = 500.0, clock_warn_ms: float = 500.0) -> dict[str, Any]:
         now_m = mono_ms()
         dt = max(1e-3, (now_m - self._last_mono) / 1000)
         self._last_mono = now_m
@@ -97,6 +97,8 @@ class HealthMonitor:
                 problems.append(f"kline_stale:{symbols_universe - kline_fresh}")
             if book_expected and book_fresh < 0.75 * book_expected:
                 problems.append(f"book_stale:{book_expected - book_fresh}")
+            if clock_offset_ms is not None and abs(clock_offset_ms) > clock_warn_ms:
+                problems.append(f"clock_offset:{clock_offset_ms:.0f}ms")
             if rest_weights is not None and not rest_weights.budget_ok(0):
                 problems.append("rest_budget_exhausted")
             p = perf or {}

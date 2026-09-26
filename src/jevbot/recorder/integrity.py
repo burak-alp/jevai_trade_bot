@@ -51,13 +51,23 @@ def read_sidecar(path: Path) -> str | None:
 
 
 def fsync_path(path: Path) -> None:
-    if os.name == "nt" and Path(path).is_dir():
-        return                  # directories cannot be opened/fsynced on Windows
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    """Flush a file (or, on POSIX, a directory entry) to stable storage.
+
+    Windows: ``os.fsync`` needs a handle opened for writing (``_commit``), and directories
+    cannot be opened at all, so files are opened ``rb+`` and directories are skipped.
+    """
+    p = Path(path)
+    if p.is_dir():
+        if os.name == "nt":
+            return
+        fd = os.open(p, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return
+    with open(p, "rb+") as fh:
+        os.fsync(fh.fileno())
 
 
 def append_manifest(dataset_dir: Path, entry: dict[str, Any]) -> None:

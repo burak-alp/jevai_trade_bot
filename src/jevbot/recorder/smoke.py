@@ -74,59 +74,81 @@ def smoke_plan(cfg: AppConfig) -> dict[str, dict[str, Any]]:
 
 
 async def _check_route(cfg: AppConfig, route: str, plan: dict[str, Any], timeout: float) -> CheckResult:
+    """connect -> SUBSCRIBE ack -> first validated event per required family -> ping/pong.
+
+    The socket is read continuously until the very end (also while waiting for the pong):
+    websockets stops reading the TCP stream when its frame queue is full, so a busy stream
+    such as bookTicker would otherwise hide the pong behind unread data frames.
+    Every failure reports the stage it happened in and what was seen until then.
+    """
     ws_cfg = cfg.binance.ws
     url = ep.combined_stream_url(route, plan["initial"], ws_cfg)
     detail: dict[str, Any] = {"url": url, "subscribe": plan["subscribe"], "required": sorted(plan["required"])}
     t0 = mono_ms()
+    stage = "connect"
+    seen: dict[str, int] = {}
+    validated: dict[str, int] = {}
+    errors: list[str] = []
+    ack: dict[str, Any] = {"ok": not plan["subscribe"]}
+    want_sub_streams = set(plan["subscribe"])
+
+    def handle(raw: bytes | str) -> None:
+        try:
+            env = decode_frame(raw)
+            if env.kind == "control":
+                if env.control_id == 1:
+                    ack["ok"] = env.error is None
+                    detail["subscribe_ack"] = env.error or "ok"
+                return
+            parse_payload(env, now_ms())
+            validated[env.family] = validated.get(env.family, 0) + 1
+            want_sub_streams.discard(env.stream)
+        except SchemaError as e:
+            errors.append(str(e)[:200])
+            return
+        seen[env.family] = seen.get(env.family, 0) + 1
+
     try:
         async with connect(url, open_timeout=ws_cfg.open_timeout_s, max_size=ws_cfg.max_message_bytes,
-                           compression=None, ping_interval=None) as ws:
+                           compression=None, ping_interval=None, max_queue=4096) as ws:
             detail["connect_ms"] = mono_ms() - t0
-            ack_ok = not plan["subscribe"]
             if plan["subscribe"]:
+                stage = "subscribe"
                 await ws.send(orjson.dumps({"method": "SUBSCRIBE", "params": plan["subscribe"], "id": 1}).decode())
-            seen: dict[str, int] = {}
-            validated: dict[str, int] = {}
-            errors: list[str] = []
+            stage = "first_events"
             deadline = mono_ms() + int(timeout * 1000)
-            want_families = set(plan["required"]) | {ep.family_of(s) for s in plan["subscribe"]}
-            want_sub_streams = set(plan["subscribe"])
             while mono_ms() < deadline:
-                remaining = (deadline - mono_ms()) / 1000
                 try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=max(0.01, remaining))
+                    raw = await asyncio.wait_for(ws.recv(), timeout=max(0.01, (deadline - mono_ms()) / 1000))
                 except asyncio.TimeoutError:
                     break
-                t_recv = now_ms()
-                try:
-                    env = decode_frame(raw)
-                    if env.kind == "control":
-                        if env.control_id == 1:
-                            ack_ok = env.error is None
-                            detail["subscribe_ack"] = env.error or "ok"
-                        continue
-                    parse_payload(env, t_recv)
-                    validated[env.family] = validated.get(env.family, 0) + 1
-                    want_sub_streams.discard(env.stream)
-                except SchemaError as e:
-                    errors.append(str(e)[:200])
-                    continue
-                seen[env.family] = seen.get(env.family, 0) + 1
-                if ack_ok and plan["required"] <= set(validated) and not want_sub_streams:
+                handle(raw)
+                if ack["ok"] and plan["required"] <= set(validated) and not want_sub_streams:
                     break
-            rtt = await asyncio.wait_for(await ws.ping(), timeout=10)
-            detail.update(events=seen, validated=validated, schema_errors=errors[:5], subscribe_ack_ok=ack_ok,
-                          subscribed_streams_delivered=sorted(set(plan["subscribe"]) - want_sub_streams),
-                          ping_rtt_ms=round(float(rtt) * 1000, 2), elapsed_ms=mono_ms() - t0)
-            missing = sorted(plan["required"] - set(validated))
-            detail["missing_required"] = missing
-            ok = ack_ok and not missing and not errors and not want_sub_streams
-            if want_families - set(validated):
-                detail["families_without_events"] = sorted(want_families - set(validated))
-            return CheckResult(f"ws:{route}", ok, detail)
+            stage = "ping"
+
+            async def drain() -> None:
+                while True:
+                    handle(await ws.recv())
+            drainer = asyncio.create_task(drain())
+            try:
+                rtt = await asyncio.wait_for(await ws.ping(), timeout=10)
+                detail["ping_rtt_ms"] = round(float(rtt) * 1000, 2)
+            finally:
+                drainer.cancel()
+            stage = "done"
     except Exception as e:
         detail["error"] = repr(e)
-        return CheckResult(f"ws:{route}", False, detail)
+    detail.update(stage=stage, events=seen, validated=validated, schema_errors=errors[:5], subscribe_ack_ok=ack["ok"],
+                  subscribed_streams_delivered=sorted(set(plan["subscribe"]) - want_sub_streams),
+                  elapsed_ms=mono_ms() - t0)
+    missing = sorted(plan["required"] - set(validated))
+    detail["missing_required"] = missing
+    want_families = set(plan["required"]) | {ep.family_of(s) for s in plan["subscribe"]}
+    if want_families - set(validated):
+        detail["families_without_events"] = sorted(want_families - set(validated))
+    ok = stage == "done" and ack["ok"] and not missing and not errors and not want_sub_streams
+    return CheckResult(f"ws:{route}", ok, detail)
 
 
 async def _check_rest(rest: BinanceRest) -> CheckResult:

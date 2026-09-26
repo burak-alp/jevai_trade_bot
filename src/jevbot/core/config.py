@@ -68,7 +68,7 @@ class BinanceConfig:
 class UniverseConfig:
     quote_asset: str = "USDT"
     contract_type: str = "PERPETUAL"
-    min_quote_vol_24h: float = 20_000_000.0
+    min_quote_vol_24h: float = 5_000_000.0
     max_symbols: int = 200
     exit_rank: int = 230
     min_listing_age_days: float = 14.0

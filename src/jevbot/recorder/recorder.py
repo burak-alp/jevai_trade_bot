@@ -36,7 +36,7 @@ from jevbot.recorder.smoke import SmokeReport, run_smoke
 
 log = get_logger(__name__)
 
-EXIT_OK, EXIT_SMOKE_FAILED, EXIT_STARTUP_FAILED = 0, 3, 4
+EXIT_OK, EXIT_SMOKE_FAILED, EXIT_STARTUP_FAILED, EXIT_WRITER_FAILED, EXIT_TASK_CRASHED = 0, 3, 4, 9, 10
 
 
 def _kline_row(k: Kline) -> tuple[Any, ...]:
@@ -75,6 +75,7 @@ class Recorder:
         self.book_last_recv: dict[str, int] = {}
         self.smoke: SmokeReport | None = None
         self._stop = asyncio.Event()
+        self._exit_code = EXIT_OK
         self._tasks: list[asyncio.Task[Any]] = []
         self._backfilling: set[str] = set()
         self._backfill_sem = asyncio.Semaphore(4)
@@ -95,7 +96,6 @@ class Recorder:
             if moved:
                 log.warning("orphan_files_quarantined", n=len(moved), files=[str(p) for p in moved[:10]])
         self.sink.start()
-        code = EXIT_OK
         try:
             try:
                 await self._sync_time()
@@ -125,10 +125,10 @@ class Recorder:
             if duration_s:
                 self._spawn(self._stop_after(duration_s), "duration")
             await self._stop.wait()
-            log.info("recorder_stopping")
+            log.info("recorder_stopping", exit_code=self._exit_code)
         finally:
             await self._shutdown()
-        return code
+        return self._exit_code
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -144,6 +144,8 @@ class Recorder:
             raise
         except Exception:
             log.exception("task_crashed", task=name)
+            if self._exit_code == EXIT_OK:
+                self._exit_code = EXIT_TASK_CRASHED
             self.request_stop()
 
     async def _stop_after(self, s: float) -> None:
@@ -480,6 +482,12 @@ class Recorder:
             await asyncio.sleep(rc.health_interval_s)
             snap = self._health_snapshot()
             self.sink.append("health", self.health.row(snap))
+            err = self.sink.writer_error()
+            if err is not None and self._exit_code == EXIT_OK:
+                # data can no longer be persisted reliably -> stop loudly instead of recording into the void
+                log.error("sink_writer_failed_stopping", err=repr(err))
+                self._exit_code = EXIT_WRITER_FAILED
+                self.request_stop()
             extra = {"counters": self.counters.__dict__, "latency_p99_ms": self.latency.snapshot_p99(),
                      "connections": [{"name": c.name, "route": c.route, "streams": len(c.streams),
                                       "connected": c.stats.connected, "msgs": c.stats.msgs,

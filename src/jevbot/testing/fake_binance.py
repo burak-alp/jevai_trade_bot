@@ -134,7 +134,7 @@ class FakeBinance:
 
     async def start(self) -> None:
         rp = self.cfg.reuse_port or None
-        self._ws_server = await serve(self._ws_handler, self.cfg.ws_host, self.cfg.ws_port, max_queue=None,
+        self._ws_server = await serve(self._ws_handler, self.cfg.ws_host, self.cfg.ws_port, max_queue=256,
                                       compression=None, reuse_port=rp)
         self.ws_port = self._ws_server.sockets[0].getsockname()[1]
         self._http_server = await asyncio.start_server(self._http_handler, self.cfg.ws_host, self.cfg.http_port,
