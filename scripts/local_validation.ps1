@@ -20,7 +20,8 @@ Write-Host "bundle -> $out"
   "## clock"; w32tm /query /status
 } *> "$out/env.txt"
 
-python -m pytest -q *> "$out/pytest.txt"; "exit=$LASTEXITCODE" | Add-Content "$out/pytest.txt"
+python -m pytest -q *> "$out/pytest.txt"; $test = $LASTEXITCODE; "exit=$test" | Add-Content "$out/pytest.txt"
+if ($test -ne 0) { Write-Host "TESTS FAILED - stop here, report $out"; exit 2 }
 
 jevbot smoke @cfg > "$out/smoke.json" 2> "$out/smoke.stderr"; $smoke = $LASTEXITCODE
 Write-Host "smoke exit=$smoke"

@@ -60,6 +60,7 @@ def test_book_ticker_max_symbols_limits_streams(tmp_path):
     rec = Recorder(cfg)
     rec.members = [f"S{i}USDT" for i in range(150)]
     streams = rec._desired_streams()
-    assert sum(s.endswith("@bookTicker") for s in streams) == 100
+    assert 0 < cfg.recorder.book_ticker_max_symbols < len(rec.members)
+    assert sum(s.endswith("@bookTicker") for s in streams) == cfg.recorder.book_ticker_max_symbols
     assert sum(s.endswith("@kline_1m") for s in streams) == 150
     assert cfg.binance.ws.compression is True
