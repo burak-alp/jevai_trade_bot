@@ -77,7 +77,10 @@ def read_manifest(dataset_dir: Path) -> dict[str, dict[str, Any]]:
             e = orjson.loads(line)
         except orjson.JSONDecodeError:
             continue            # torn last line after a crash
-        out[e["file"]] = e
+        if e.get("deleted"):    # tombstone written by compaction
+            out.pop(e["file"], None)
+        else:
+            out[e["file"]] = e
     return out
 
 

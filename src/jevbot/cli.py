@@ -87,6 +87,22 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0 if rep.ok else 5
 
 
+def cmd_compact(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.core.time import DAY_MS, HOUR_MS
+    from jevbot.recorder.compact import compact_all
+
+    cfg = _load(args)
+    root = Path(args.root) if args.root else Path(cfg.data_dir) / "raw"
+    datasets = args.dataset.split(",") if args.dataset else None
+    res = compact_all(root, datasets, group_ms=DAY_MS if args.group == "day" else HOUR_MS,
+                      grace_ms=int(args.grace_min * 60_000), dry_run=args.dry_run)
+    out = {k: v.__dict__ for k, v in res.items()}
+    sys.stdout.write(orjson.dumps(out, option=orjson.OPT_INDENT_2).decode() + "\n")
+    return 0 if not any(v.skipped_unverified for v in res.values()) else 5
+
+
 def cmd_download(args: argparse.Namespace) -> int:
     from datetime import date
     from pathlib import Path
@@ -161,6 +177,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.add_argument("--root", default=None, help="directory to verify (default: data_dir)")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("compact", help="merge small recorder parts into hourly/daily sorted files (verified, atomic)")
+    _add_common(p)
+    p.add_argument("--root", default=None, help="recorder raw root (default: <data_dir>/raw)")
+    p.add_argument("--dataset", default=None, help="comma separated datasets (default: all present)")
+    p.add_argument("--group", choices=["hour", "day"], default="hour")
+    p.add_argument("--grace-min", type=float, default=10.0, help="only groups that ended at least this long ago")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_compact)
 
     p = sub.add_parser("download", help="download historical data from data.binance.vision (futures/um)")
     _add_common(p)
