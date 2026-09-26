@@ -53,6 +53,9 @@ def read_sidecar(path: Path) -> str | None:
 def fsync_path(path: Path) -> None:
     """Flush a file (or, on POSIX, a directory entry) to stable storage.
 
+    Manifest keys everywhere are POSIX-style relative paths (``Path.as_posix()``) so manifests
+    are portable between Linux and Windows.
+
     Windows: ``os.fsync`` needs a handle opened for writing (``_commit``), and directories
     cannot be opened at all, so files are opened ``rb+`` and directories are skipped.
     """
@@ -142,9 +145,9 @@ def verify_tree(root: Path) -> VerifyReport:
         manifests[mf.parent] = read_manifest(mf.parent)
     seen: set[tuple[Path, str]] = set()
     for p in sorted([*root.rglob("*.parquet"), *root.rglob("*.json.gz")]):
-        rel = str(p.relative_to(root))
+        rel = p.relative_to(root).as_posix()
         dataset_dir = next((d for d in manifests if d in p.parents), None)
-        man_key = str(p.relative_to(dataset_dir)) if dataset_dir else None
+        man_key = p.relative_to(dataset_dir).as_posix() if dataset_dir else None
         expected = read_sidecar(p)
         if expected is None:
             rep.missing_sidecar.append(rel)
@@ -177,6 +180,6 @@ def verify_tree(root: Path) -> VerifyReport:
     for d, entries in manifests.items():
         for name in entries:
             if (d, name) not in seen and not (d / name).exists():
-                rep.manifest_missing_file.append(str((d / name).relative_to(root)))
-    rep.orphans_tmp = [str(p.relative_to(root)) for p in root.rglob(f"*{TMP_SUFFIX}")]
+                rep.manifest_missing_file.append((d / name).relative_to(root).as_posix())
+    rep.orphans_tmp = [p.relative_to(root).as_posix() for p in root.rglob(f"*{TMP_SUFFIX}")]
     return rep

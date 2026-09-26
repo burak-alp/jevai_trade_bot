@@ -23,7 +23,7 @@ def files_of(root, ds="kline_1m"):
 def check_window_consistency(root, ds="kline_1m", tcol="open_time"):
     man = read_manifest(root / ds)
     for f in files_of(root, ds):
-        e = man[str(f.relative_to(root / ds))]
+        e = man[f.relative_to(root / ds).as_posix()]
         t = pq.read_table(f).column(tcol).to_pylist()
         assert e["window_start"] <= min(t) and max(t) < e["window_end"], (e, min(t), max(t))
         assert e["t_min"] == min(t) and e["t_max"] == max(t)

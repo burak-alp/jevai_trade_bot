@@ -70,7 +70,7 @@ def test_unverified_source_is_kept_and_excluded(tmp_path):
 def test_recovery_of_writing_and_committed_journals(tmp_path):
     make_parts(tmp_path, hours=1)
     ds = tmp_path / "book_1s"
-    srcs = [str(p.relative_to(ds)) for p in parts(tmp_path)]
+    srcs = [p.relative_to(ds).as_posix() for p in parts(tmp_path)]
     jdir = ds / "_compaction"
     jdir.mkdir()
     # crash during writing: a half-written target exists, sources intact

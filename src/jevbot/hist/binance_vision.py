@@ -380,7 +380,7 @@ class BinanceVision:
         digest = sha256_file(final)
         write_sidecar(final, digest)
         (final.with_name(final.name + ".quality.json")).write_bytes(orjson.dumps(quality, option=orjson.OPT_INDENT_2))
-        append_manifest(root, {"file": str(final.relative_to(root)), "rows": res.rows,
+        append_manifest(root, {"file": final.relative_to(root).as_posix(), "rows": res.rows,
                                "bytes": final.stat().st_size, "sha256": digest, "source_key": key,
                                "source_sha256": src_sha, "symbol": job.symbol, "period": job.period,
                                "quality": quality["status"], "quality_issues": quality["issues"],

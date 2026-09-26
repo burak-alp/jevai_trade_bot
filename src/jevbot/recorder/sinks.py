@@ -250,7 +250,7 @@ class SinkManager:
         size = of.final_path.stat().st_size
         dataset_dir = self.root / name
         append_manifest(dataset_dir, {
-            "file": str(of.final_path.relative_to(dataset_dir)), "rows": of.rows, "bytes": size,
+            "file": of.final_path.relative_to(dataset_dir).as_posix(), "rows": of.rows, "bytes": size,
             "sha256": digest, "t_min": of.t_min, "t_max": of.t_max, "window_start": key,
             "window_end": key + self.rotate_ms, "schema": SCHEMA_VERSION, "finalized_at": now_ms(),
         })

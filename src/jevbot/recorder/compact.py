@@ -85,8 +85,7 @@ def _journal_dir(dataset_dir: Path) -> Path:
 def _write_journal(path: Path, doc: dict[str, Any]) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_bytes(orjson.dumps(doc))
-    with open(tmp, "rb") as fh:
-        os.fsync(fh.fileno())
+    fsync_path(tmp)                     # writable handle; a read-only fsync is EBADF on Windows
     os.replace(tmp, path)
 
 
@@ -174,7 +173,7 @@ def _compact_group(dataset_dir: Path, dataset: str, g: int, group_ms: int,
     out_dir = dataset_dir / f"date={ms_to_date(g)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / f"{dataset}-{stamp}-compact-{os.getpid()}-{now_ms()}.parquet"
-    target_rel = str(target.relative_to(dataset_dir))
+    target_rel = target.relative_to(dataset_dir).as_posix()
     journal = _journal_dir(dataset_dir) / f"{dataset}-{stamp}-{now_ms()}.json"
     src_doc = [{"file": rel, "sha256": e["sha256"], "rows": e["rows"]} for rel, e in sources]
     _write_journal(journal, {"state": "writing", "target": target_rel, "sources": src_doc, "t": now_ms()})

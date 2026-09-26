@@ -223,7 +223,7 @@ class Recorder:
         os.replace(tmp, path)
         digest = sha256_file(path)
         write_sidecar(path, digest)
-        append_manifest(self.raw_dir / "exchange_info", {"file": str(path.relative_to(self.raw_dir / "exchange_info")),
+        append_manifest(self.raw_dir / "exchange_info", {"file": path.relative_to(self.raw_dir / "exchange_info").as_posix(),
                                                          "bytes": path.stat().st_size, "sha256": digest, "t": t})
 
     async def _universe_loop(self) -> None:
