@@ -21,6 +21,7 @@ Sprint 1'e geçiş kapısı: gerçek Binance'e karşı [`docs/03_live_validation
 - [`docs/01_architecture_review.md`](docs/01_architecture_review.md) — mimari eleştirisi, riskler, hedef mimari, roadmap, acceptance criteria
 - [`docs/02_technical_spec.md`](docs/02_technical_spec.md) — implementasyon spesifikasyonu
 - [`docs/03_live_validation_runbook.md`](docs/03_live_validation_runbook.md) — VPS'te smoke / 1 saat / 24 saat doğrulama komutları
+- [`LOCAL_AGENT.md`](LOCAL_AGENT.md) — yerel ajan (GPT-6) görev + rapor + eleştiri protokolü; `scripts/local_validation.sh`
 
 ---
 

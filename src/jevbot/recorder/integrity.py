@@ -51,6 +51,8 @@ def read_sidecar(path: Path) -> str | None:
 
 
 def fsync_path(path: Path) -> None:
+    if os.name == "nt" and Path(path).is_dir():
+        return                  # directories cannot be opened/fsynced on Windows
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)

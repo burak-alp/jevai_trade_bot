@@ -20,7 +20,6 @@ never see duplicates; plain globbing may briefly see both only inside a crash wi
 
 from __future__ import annotations
 
-import fcntl
 import os
 import time
 from dataclasses import dataclass, field
@@ -134,7 +133,9 @@ def compact_dataset(raw_root: Path, dataset: str, *, group_ms: int = HOUR_MS, gr
         return result
     lock_path = _journal_dir(dataset_dir) / ".lock"
     with open(lock_path, "w") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if os.name != "nt":                 # single-writer lock; on Windows run one compactor at a time
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         recover(dataset_dir, result)
         manifest = read_manifest(dataset_dir)
         groups: dict[int, list[tuple[str, dict[str, Any]]]] = {}
