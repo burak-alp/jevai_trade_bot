@@ -1,0 +1,121 @@
+{
+  "t": 1790445322027,
+  "status": "HEALTHY",
+  "uptime_s": 70.3,
+  "cpu_pct": 26.5,
+  "rss_mb": 94.3,
+  "msgs_per_s": 4071.4,
+  "msgs_per_s_public": 3310.2,
+  "msgs_per_s_market": 761.1,
+  "bytes_per_s": 985356.2,
+  "conns_connected": 6,
+  "conns_total": 6,
+  "reconnects_total": 0,
+  "schema_errors_total": 0,
+  "symbols_universe": 200,
+  "symbols_kline_fresh": 200,
+  "symbols_book_fresh": 200,
+  "rows_written_total": 26999,
+  "parquet_bytes_total": 0,
+  "files_total": 0,
+  "queue_depth": 0,
+  "clock_offset_ms": 11.3,
+  "rest_weight_used": 75,
+  "rest_weight_limit": 2400,
+  "detail": "",
+  "counters": {
+    "schema_errors": {},
+    "frames_by_family": {
+      "bookTicker": 228457,
+      "kline": 52600,
+      "depth": 3058,
+      "forceOrder": 38,
+      "markPrice": 70
+    },
+    "control_replies": 0,
+    "klines_ws": 200,
+    "klines_rest": 0,
+    "backfill_requests": 0,
+    "backfill_failures": 0,
+    "gaps_detected": 0,
+    "oi_polls": 234,
+    "oi_errors": 0,
+    "rate_limited": 0
+  },
+  "latency_p99_ms": {
+    "markPrice/market": 6.0,
+    "bookTicker/public": 4.0,
+    "kline/market": 26.0,
+    "depth/public": 4.0,
+    "forceOrder/market": 1.0
+  },
+  "connections": [
+    {
+      "name": "public-1",
+      "route": "public",
+      "streams": 100,
+      "connected": true,
+      "msgs": 124107,
+      "connects": 1,
+      "rotations": 0,
+      "silence_reconnects": 0,
+      "last_disconnect_reason": null
+    },
+    {
+      "name": "public-2",
+      "route": "public",
+      "streams": 100,
+      "connected": true,
+      "msgs": 104350,
+      "connects": 1,
+      "rotations": 0,
+      "silence_reconnects": 0,
+      "last_disconnect_reason": null
+    },
+    {
+      "name": "public-3",
+      "route": "public",
+      "streams": 22,
+      "connected": true,
+      "msgs": 3058,
+      "connects": 1,
+      "rotations": 0,
+      "silence_reconnects": 0,
+      "last_disconnect_reason": null
+    },
+    {
+      "name": "market-4",
+      "route": "market",
+      "streams": 100,
+      "connected": true,
+      "msgs": 25882,
+      "connects": 1,
+      "rotations": 0,
+      "silence_reconnects": 0,
+      "last_disconnect_reason": null
+    },
+    {
+      "name": "market-5",
+      "route": "market",
+      "streams": 100,
+      "connected": true,
+      "msgs": 26300,
+      "connects": 1,
+      "rotations": 0,
+      "silence_reconnects": 0,
+      "last_disconnect_reason": null
+    },
+    {
+      "name": "market-6",
+      "route": "market",
+      "streams": 2,
+      "connected": true,
+      "msgs": 526,
+      "connects": 1,
+      "rotations": 0,
+      "silence_reconnects": 0,
+      "last_disconnect_reason": null
+    }
+  ],
+  "smoke_ok": true
+}

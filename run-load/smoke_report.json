@@ -1,0 +1,94 @@
+{
+  "t": 1790445252007,
+  "ok": true,
+  "checks": [
+    {
+      "name": "rest",
+      "ok": true,
+      "detail": {
+        "rtt_ms": 3,
+        "clock_offset_ms": 0.5,
+        "rate_limits": [
+          {
+            "rateLimitType": "REQUEST_WEIGHT",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 2400
+          },
+          {
+            "rateLimitType": "ORDERS",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 1200
+          }
+        ],
+        "symbols": 240,
+        "weight_used_1m": 44
+      }
+    },
+    {
+      "name": "ws:market",
+      "ok": true,
+      "detail": {
+        "url": "ws://127.0.0.1:18766/market/stream?streams=btcusdt@kline_1m/!markPrice@arr@1s/!forceOrder@arr",
+        "subscribe": [
+          "ethusdt@kline_1m"
+        ],
+        "required": [
+          "kline",
+          "markPrice"
+        ],
+        "connect_ms": 3,
+        "subscribe_ack": "ok",
+        "events": {
+          "kline": 4,
+          "markPrice": 1
+        },
+        "validated": {
+          "kline": 4,
+          "markPrice": 1
+        },
+        "schema_errors": [],
+        "subscribe_ack_ok": true,
+        "subscribed_streams_delivered": [
+          "ethusdt@kline_1m"
+        ],
+        "ping_rtt_ms": 0.32,
+        "elapsed_ms": 275,
+        "missing_required": []
+      }
+    },
+    {
+      "name": "ws:public",
+      "ok": true,
+      "detail": {
+        "url": "ws://127.0.0.1:18766/public/stream?streams=btcusdt@bookTicker/btcusdt@depth20@500ms",
+        "subscribe": [
+          "ethusdt@bookTicker"
+        ],
+        "required": [
+          "bookTicker",
+          "depth"
+        ],
+        "connect_ms": 3,
+        "subscribe_ack": "ok",
+        "events": {
+          "bookTicker": 480,
+          "depth": 1
+        },
+        "validated": {
+          "bookTicker": 480,
+          "depth": 1
+        },
+        "schema_errors": [],
+        "subscribe_ack_ok": true,
+        "subscribed_streams_delivered": [
+          "ethusdt@bookTicker"
+        ],
+        "ping_rtt_ms": 0.33,
+        "elapsed_ms": 144,
+        "missing_required": []
+      }
+    }
+  ]
+}

@@ -22,7 +22,7 @@ from typing import Any
 
 import orjson
 from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
+from websockets.exceptions import ConnectionClosed, InvalidURI
 
 from jevbot.core.config import WsConfig
 from jevbot.core.logging import get_logger
@@ -205,7 +205,9 @@ class WsConnection:
                 continue
             try:
                 ws = await self._open()
-            except (OSError, asyncio.TimeoutError, InvalidHandshake, InvalidURI, ConnectionClosed) as e:
+            except InvalidURI:
+                raise                                     # configuration error: fail loudly
+            except Exception as e:                        # network, TLS, proxy, handshake, timeout ...
                 self.stats.connect_failures += 1
                 delay = backoff * (1 + random.uniform(-self.cfg.backoff_jitter, self.cfg.backoff_jitter))
                 log.warning("ws_connect_failed", conn=self.name, err=repr(e), retry_in_s=round(delay, 2))
@@ -214,7 +216,15 @@ class WsConnection:
                 backoff = min(self.cfg.backoff_max_s, backoff * 2)
                 continue
             backoff = self.cfg.backoff_initial_s
-            reason = await self._pump(ws)
+            try:
+                reason = await self._pump(ws)
+            except Exception as e:                        # never let the connection task die silently
+                log.exception("ws_pump_failed", conn=self.name)
+                reason = f"error:{type(e).__name__}"
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
             t_down = now_ms()
             self._ws = None
             self.stats.connected = False
