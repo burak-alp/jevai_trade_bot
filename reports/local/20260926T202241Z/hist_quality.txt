@@ -1,0 +1,286 @@
+== D:\JevAI\data\hist\um\aggTrades\symbol=BTCUSDT\BTCUSDT-aggTrades-2026-09-24.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 1551249,
+    "id_not_increasing": 0,
+    "time_decreasing": 0,
+    "nonpositive": 0,
+    "outside_period": 0
+  }
+}
+== D:\JevAI\data\hist\um\bookDepth\symbol=BTCUSDT\BTCUSDT-bookDepth-2026-09-24.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 34560,
+    "negative_values": 0,
+    "timestamp_outside_period": 0,
+    "timestamps": 2880,
+    "cadence_median_ms": 30000,
+    "cadence_max_gap_ms": 36000,
+    "cadence_p95_ms": 32000,
+    "bands": [
+      -5.0,
+      -4.0,
+      -3.0,
+      -2.0,
+      -1.0,
+      -0.2,
+      0.2,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0
+    ],
+    "frozen_bands": [],
+    "constant_bands": [],
+    "non_cumulative_snapshots": 0
+  }
+}
+== D:\JevAI\data\hist\um\fundingRate\symbol=BTCUSDT\BTCUSDT-fundingRate-2026-07.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 93,
+    "calc_time_non_monotonic": 0,
+    "calc_time_duplicates": 0,
+    "calc_time_outside_period": 0,
+    "funding_interval_hours": [
+      8
+    ],
+    "extreme_rates": 0
+  }
+}
+== D:\JevAI\data\hist\um\fundingRate\symbol=BTCUSDT\BTCUSDT-fundingRate-2026-08.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 93,
+    "calc_time_non_monotonic": 0,
+    "calc_time_duplicates": 0,
+    "calc_time_outside_period": 0,
+    "funding_interval_hours": [
+      8
+    ],
+    "extreme_rates": 0
+  }
+}
+== D:\JevAI\data\hist\um\klines\1m\symbol=BTCUSDT\BTCUSDT-klines-1m-2026-09-22.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 1440,
+    "open_time_non_monotonic": 0,
+    "open_time_duplicates": 0,
+    "open_time_outside_period": 0,
+    "misaligned_open_time": 0,
+    "close_time_mismatch": 0,
+    "expected_bars": 1440,
+    "missing_bars": 0,
+    "missing_ranges": [],
+    "coverage": 1.0,
+    "high_below_open_close": 0,
+    "low_above_open_close": 0,
+    "nonpositive_price": 0,
+    "negative_volume": 0,
+    "negative_quote_volume": 0,
+    "negative_taker_buy_volume": 0,
+    "negative_taker_buy_quote_volume": 0,
+    "negative_count": 0,
+    "taker_buy_gt_volume": 0
+  }
+}
+== D:\JevAI\data\hist\um\klines\1m\symbol=BTCUSDT\BTCUSDT-klines-1m-2026-09-23.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 1440,
+    "open_time_non_monotonic": 0,
+    "open_time_duplicates": 0,
+    "open_time_outside_period": 0,
+    "misaligned_open_time": 0,
+    "close_time_mismatch": 0,
+    "expected_bars": 1440,
+    "missing_bars": 0,
+    "missing_ranges": [],
+    "coverage": 1.0,
+    "high_below_open_close": 0,
+    "low_above_open_close": 0,
+    "nonpositive_price": 0,
+    "negative_volume": 0,
+    "negative_quote_volume": 0,
+    "negative_taker_buy_volume": 0,
+    "negative_taker_buy_quote_volume": 0,
+    "negative_count": 0,
+    "taker_buy_gt_volume": 0
+  }
+}
+== D:\JevAI\data\hist\um\klines\1m\symbol=BTCUSDT\BTCUSDT-klines-1m-2026-09-24.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 1440,
+    "open_time_non_monotonic": 0,
+    "open_time_duplicates": 0,
+    "open_time_outside_period": 0,
+    "misaligned_open_time": 0,
+    "close_time_mismatch": 0,
+    "expected_bars": 1440,
+    "missing_bars": 0,
+    "missing_ranges": [],
+    "coverage": 1.0,
+    "high_below_open_close": 0,
+    "low_above_open_close": 0,
+    "nonpositive_price": 0,
+    "negative_volume": 0,
+    "negative_quote_volume": 0,
+    "negative_taker_buy_volume": 0,
+    "negative_taker_buy_quote_volume": 0,
+    "negative_count": 0,
+    "taker_buy_gt_volume": 0
+  }
+}
+== D:\JevAI\data\hist\um\klines\1m\symbol=ETHUSDT\ETHUSDT-klines-1m-2026-09-22.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 1440,
+    "open_time_non_monotonic": 0,
+    "open_time_duplicates": 0,
+    "open_time_outside_period": 0,
+    "misaligned_open_time": 0,
+    "close_time_mismatch": 0,
+    "expected_bars": 1440,
+    "missing_bars": 0,
+    "missing_ranges": [],
+    "coverage": 1.0,
+    "high_below_open_close": 0,
+    "low_above_open_close": 0,
+    "nonpositive_price": 0,
+    "negative_volume": 0,
+    "negative_quote_volume": 0,
+    "negative_taker_buy_volume": 0,
+    "negative_taker_buy_quote_volume": 0,
+    "negative_count": 0,
+    "taker_buy_gt_volume": 0
+  }
+}
+== D:\JevAI\data\hist\um\klines\1m\symbol=ETHUSDT\ETHUSDT-klines-1m-2026-09-23.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 1440,
+    "open_time_non_monotonic": 0,
+    "open_time_duplicates": 0,
+    "open_time_outside_period": 0,
+    "misaligned_open_time": 0,
+    "close_time_mismatch": 0,
+    "expected_bars": 1440,
+    "missing_bars": 0,
+    "missing_ranges": [],
+    "coverage": 1.0,
+    "high_below_open_close": 0,
+    "low_above_open_close": 0,
+    "nonpositive_price": 0,
+    "negative_volume": 0,
+    "negative_quote_volume": 0,
+    "negative_taker_buy_volume": 0,
+    "negative_taker_buy_quote_volume": 0,
+    "negative_count": 0,
+    "taker_buy_gt_volume": 0
+  }
+}
+== D:\JevAI\data\hist\um\klines\1m\symbol=ETHUSDT\ETHUSDT-klines-1m-2026-09-24.parquet.quality.json
+{
+  "status": "ok",
+  "issues": [],
+  "checks": {
+    "rows": 1440,
+    "open_time_non_monotonic": 0,
+    "open_time_duplicates": 0,
+    "open_time_outside_period": 0,
+    "misaligned_open_time": 0,
+    "close_time_mismatch": 0,
+    "expected_bars": 1440,
+    "missing_bars": 0,
+    "missing_ranges": [],
+    "coverage": 1.0,
+    "high_below_open_close": 0,
+    "low_above_open_close": 0,
+    "nonpositive_price": 0,
+    "negative_volume": 0,
+    "negative_quote_volume": 0,
+    "negative_taker_buy_volume": 0,
+    "negative_taker_buy_quote_volume": 0,
+    "negative_count": 0,
+    "taker_buy_gt_volume": 0
+  }
+}
+== D:\JevAI\data\hist\um\metrics\_suspect\symbol=BTCUSDT\BTCUSDT-metrics-2026-09-22.parquet.quality.json
+{
+  "status": "suspect",
+  "issues": [
+    "suspect:create_time_non_monotonic:33"
+  ],
+  "checks": {
+    "rows": 288,
+    "create_time_non_monotonic": 33,
+    "create_time_duplicates": 0,
+    "create_time_conflicting_duplicates": 0,
+    "create_time_outside_period": 0,
+    "create_time_offset_ms": 0,
+    "create_time_offset_share": 1.0,
+    "create_time_first": 0,
+    "expected_rows": 288,
+    "coverage_5m": 1.0
+  }
+}
+== D:\JevAI\data\hist\um\metrics\_suspect\symbol=BTCUSDT\BTCUSDT-metrics-2026-09-23.parquet.quality.json
+{
+  "status": "suspect",
+  "issues": [
+    "suspect:create_time_non_monotonic:30"
+  ],
+  "checks": {
+    "rows": 288,
+    "create_time_non_monotonic": 30,
+    "create_time_duplicates": 0,
+    "create_time_conflicting_duplicates": 0,
+    "create_time_outside_period": 0,
+    "create_time_offset_ms": 0,
+    "create_time_offset_share": 1.0,
+    "create_time_first": 0,
+    "expected_rows": 288,
+    "coverage_5m": 1.0
+  }
+}
+== D:\JevAI\data\hist\um\metrics\_suspect\symbol=BTCUSDT\BTCUSDT-metrics-2026-09-24.parquet.quality.json
+{
+  "status": "suspect",
+  "issues": [
+    "suspect:create_time_non_monotonic:35"
+  ],
+  "checks": {
+    "rows": 288,
+    "create_time_non_monotonic": 35,
+    "create_time_duplicates": 0,
+    "create_time_conflicting_duplicates": 0,
+    "create_time_outside_period": 0,
+    "create_time_offset_ms": 0,
+    "create_time_offset_share": 1.0,
+    "create_time_first": 0,
+    "expected_rows": 288,
+    "coverage_5m": 1.0
+  }
+}
