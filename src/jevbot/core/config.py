@@ -120,7 +120,8 @@ class RecorderConfig:
 
 @dataclass(frozen=True)
 class SinkConfig:
-    rotate_s: float = 600.0
+    rotate_s: float = 180.0
+    late_grace_s: float = 60.0
     flush_s: float = 5.0
     flush_rows: int = 50_000
     compression: str = "zstd"

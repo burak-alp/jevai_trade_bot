@@ -87,7 +87,8 @@ recorder:
     required: true                  # recorder exits if a route fails the smoke test at startup
 
 sink:
-  rotate_s: 600                     # Parquet file rotation (a crash loses at most one open file)
+  rotate_s: 180                     # event-time window per Parquet file (crash-loss bound; compaction merges later)
+  late_grace_s: 60                  # a window is finalized at window_end + grace; later rows -> extra part
   flush_s: 5                        # buffered rows -> writer thread
   flush_rows: 50000
   compression: zstd
