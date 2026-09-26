@@ -2,6 +2,7 @@
 
 > Bu doküman `01_architecture_review.md`'deki kararların implementasyon spesifikasyonudur.
 > Etiketler: `[CAL]` empirical calibration gerekir · `[FIX]` güvenlik sabiti, optimize edilmez · `[VERIFY]` dış API detayı, güncel dokümandan doğrulanmalı.
+> v0.2 (2026-09-26) düzeltmeleri: TypeSafe OpenAPI doğrulaması (§7.3, §7.5, §8.6), model pinning varsayımının kaldırılması, Binance Algo Order migration'ı (§11.2, §11.4), 2026 WS path migration'ı (§3.1), R arm pass-rate leakage düzeltmesi (§9.2, §14.3), proposal geometrisinin state'te korunması (§7.1).
 
 İçindekiler
 0. Conventions · 1. Event model & flows · 2. Clock & latency · 3. Market data · 4. Feature spec · 5. Scanner · 6. TradeProposal & labels · 7. Jev judgment layer · 8. Calibration · 9. Policy & persistence · 10. Risk engine · 11. Execution · 12. Persistence & storage · 13. Replay engine · 14. Experiments & statistics · 15. Observability · 16. Testing · 17. Failure matrix · 18. Config · 19. Code layout · 20. First backlog
@@ -116,7 +117,20 @@ Neden recorder ayrı: trader'daki bir bug veya restart veri kaybına yol açmama
 
 ## 3. Market Data
 
-### 3.1 Stream planı `[VERIFY: USDⓈ-M WS endpoint path'leri (2025–26'da /public, /market, /private ayrımı duyuruldu), stream/connection limitleri, 10 msg/s subscribe limiti]`
+### 3.1 Stream planı
+
+**2026 WS path migration (doğrulandı):** USDⓈ-M Futures WS base URL'leri trafik kategorisine göre ayrıldı; legacy (route'suz) URL'ler **2026-04-23**'te kapatıldı:
+
+| Route | Base | İçerik | Bu projede |
+|---|---|---|---|
+| `/public` | `wss://fstream.binance.com/public` | yüksek frekanslı order book verisi | `@bookTicker`, `@depth20@500ms` |
+| `/market` | `wss://fstream.binance.com/market` | normal market verisi | `@kline_1m`, `!markPrice@arr@1s`, `!forceOrder@arr` (ve ileride `@aggTrade`) |
+| `/private` | `wss://fstream.binance.com/private` | user data (`/private/ws?listenKey=...&events=...`) | Sprint 0'da **yok** |
+
+Kurallar:
+- Base URL, route path'leri ve **stream → route eşlemesi source'a gömülmez**; `config/base.yaml → binance.ws` altından gelir. Yanlış route'a subscribe edilen stream veri göndermez (sessiz hata) → aşağıdaki smoke test bu yüzden zorunlu.
+- **Startup integration smoke test** (her route için): bağlantı → subscribe (ack) → ilk event (timeout içinde) → event schema validation → heartbeat (ping/pong RTT). Hepsi geçmeden recorder/trader `HEALTHY` sayılmaz; başarısız route `UNHEALTHY` olarak raporlanır ve periyodik yeniden denenir.
+- Connection limitleri (stream/connection, 10 incoming msg/s, 24 h ömür) config'tedir; varsayılanlar muhafazakâr seçilir (ör. ≤ 100 stream/connection).
 
 | Stream | Kapsam | Kullanım | Tahmini yük |
 |---|---|---|---|
@@ -357,7 +371,8 @@ class TradeProposal:
     family: str; family_version: str
     side: int                    # +1 / −1
     entry_ref: float; stop_price: float; tp_price: float
-    stop_dist_bps: float; r_tp: float; horizon_s: int
+    trigger_level: float; structural_stop_used: bool
+    stop_dist: float; stop_dist_bps: float; r_tp: float; horizon_s: int
     cost_rt_bps: float; cost_R: float
     scanner_score: float; scanner_rank: int
     regime: str                  # deterministic, §4
@@ -408,6 +423,22 @@ y_direction = up/flat/down: ret_H/atr_pct > +0.5 / arada / < −0.5         (Bot
 
 İlkeler: anonim (sembol/tarih/mutlak fiyat yok), side-canonicalized (pozitif = pozisyon lehine), yuvarlanmış (2 ondalık), sabit anahtar sırası, birim anahtar adında, ≤ ~400 token.
 
+**Proposal geometrisi state'te zorunludur.** Anonimleştirme yalnızca *tanımlayıcıları* çıkarır; Jev'in "TP, SL'den önce H içinde gelir mi?" sorusunu değerlendirebilmesi için değerlendirdiği trade'in geometrisini bilmesi gerekir. `proposal` bloğu şu normalize alanları **her zaman** içerir:
+
+| Alan | Tanım |
+|---|---|
+| `side_canonical` | sabit `"with_position"` — tüm aligned alanların yorum anahtarı (gerçek side canonical variant'ta yazılmaz; model yön seçmez) |
+| `stop_dist_atr` | `|entry_ref − stop| / atr_15m` |
+| `stop_dist_bps` | `|entry_ref − stop| / entry_ref · 1e4` (oran; sembol/fiyat tanımlamaz) |
+| `tp_R` | TP mesafesi / stop mesafesi |
+| `tp_dist_atr` | `tp_R · stop_dist_atr` |
+| `horizon_min` | time-exit süresi |
+| `cost_R` | round-trip maliyet / 1R |
+| `trigger_distance_atr` | `side · (entry_ref − trigger_level) / atr_15m` — entry'nin setup trigger seviyesinden ne kadar uzaklaştığı (chase mesafesi) |
+| `structural_stop_used` | `true` = stop structure'dan, `false` = ATR tabanından geldi |
+
+Model trade yönünü **seçmez**; deterministic proposal'ın başarı olasılığını değerlendirir.
+
 ```python
 ALIGNED = {"ret_5m_atr","ret_15m_atr","ret_1h_atr","ret_4h_atr","resid_ret_1h_atr",
            "ema_spread_atr","dist_ema20_atr","dist_vwap4h_atr","taker_imb_15m","taker_imb_1h",
@@ -423,15 +454,23 @@ def build_state(p: TradeProposal) -> dict:
          "breadth_1h_aligned": round(f["breadth_1h"] if s>0 else 1-f["breadth_1h"], 2)}
     return {"schema": "state.v1",
             "proposal": {"family": FAMILY_NEUTRAL_NAME[p.family],   # "range_break" | "trend_pullback"
-                         "stop_dist_atr": ..., "tp_R": p.r_tp, "horizon_min": p.horizon_s//60,
-                         "cost_R": round(p.cost_R, 2)},
+                         "side_canonical": "with_position",
+                         "stop_dist_atr": r2(p.stop_dist / f["atr_15m"]),
+                         "stop_dist_bps": r2(p.stop_dist_bps),
+                         "tp_R": p.r_tp, "tp_dist_atr": r2(p.r_tp * p.stop_dist / f["atr_15m"]),
+                         "horizon_min": p.horizon_s // 60,
+                         "cost_R": r2(p.cost_R),
+                         "trigger_distance_atr": r2(s * (p.entry_ref - p.trigger_level) / f["atr_15m"]),
+                         "structural_stop_used": p.structural_stop_used},
             "asset": a, "market": m}
 ```
 
 Örnek (≈ 350 token):
 ```json
 {"schema":"state.v1",
- "proposal":{"family":"range_break","stop_dist_atr":1.4,"tp_R":1.5,"horizon_min":120,"cost_R":0.14},
+ "proposal":{"family":"range_break","side_canonical":"with_position","stop_dist_atr":1.4,"stop_dist_bps":92.0,
+             "tp_R":1.5,"tp_dist_atr":2.1,"horizon_min":120,"cost_R":0.14,"trigger_distance_atr":0.35,
+             "structural_stop_used":true},
  "asset":{"ret_5m_atr":0.42,"ret_15m_atr":1.1,"ret_1h_atr":1.9,"ret_4h_atr":2.3,"resid_ret_1h_atr":1.2,
           "er_1h":0.46,"ema_spread_atr":0.8,"dist_ema20_atr":1.6,"dist_vwap4h_atr":1.9,
           "rv_pctile_30d":0.71,"rvol_z_15m":2.1,"taker_imb_15m":0.18,"cvd_z_1h":1.7,
@@ -478,24 +517,50 @@ questions:
 ```
 Metinlerde yargı sözcüğü yok ("strong", "bullish", "healthy" vb. yasak — lint kuralı, §16).
 
-### 7.3 Request / response
+### 7.3 Request / response (TypeSafe OpenAPI ile doğrulandı)
 
-Jev API "State, Model, Questions → typed results by question ID" modelini kullanır; Noul = P(yes), Choice/Score kendi probability/confidence alanlarını döndürür. Tam alan adları `[VERIFY]` — adapter katmanı bizim iç şemamıza map'ler:
+Kaynak: `https://api.typesafe.ai/openapi.json`.
+
+| Endpoint | Kullanım |
+|---|---|
+| `POST /v1/systemone` | judgment çağrısı. Request gövdesi doğrudan `{model, state, questions}` |
+| `GET /v1/models` | kullanılabilir model listesi (startup'ta ve saatlik) |
+
+Cevap tipleri:
+
+| Soru tipi | Answer alanları | Bizim kullanımımız |
+|---|---|---|
+| Noul | `noul` = **P(yes/true)** (+ tip alanları) | `p_raw = answer.noul` |
+| Choice | `choice`, `confidence`, `probabilities` | `p_raw[option] = probabilities[option]` |
+| Score | `score`, `confidence`, `legend`, `probabilities` | legend sırasına göre ordinal olasılıklar |
+
+Response: `{model, answers, usage}`. `answers` question id'ye göre eşlenir; `usage` maliyet/token muhasebesi için saklanır.
+
+**Model pinning garanti değildir.** OpenAPI'de ayrı bir `model_version` alanı **yok**; response yalnızca `model` string'i döndürür ve bu değer request'teki alias'tan farklı olabilir. Bu yüzden:
+1. Startup'ta `GET /v1/models` ile modeller keşfedilir; alias olmayan (versioned/dated) bir isim varsa o seçilir ve `model_requested` olarak config'e/`runs`'a yazılır. Yoksa alias kullanılır ve bu durum run kaydında `pinning = "alias_only"` olarak işaretlenir.
+2. **Her** request için `model_requested` ve response'taki gerçek `model_returned` saklanır.
+3. `model_returned` değeri run içinde değişirse → drift olayı (§8.6).
+4. Tam pinning mümkün olmadığı sürece **çıktı dağılımı drift detection'ı (PSI + test-retest) zorunludur**; aynı `model_returned` string'i davranışın değişmediğini garanti etmez.
+
+İç şema (adapter bu şemaya map'ler):
 
 ```python
 @dataclass(frozen=True, slots=True)
 class JudgeRequest:
     request_id: str; proposal_id: str; variant: str
     questionset_version: str; prompt_hash: str
-    model_id: str; model_version: str; sampling: Mapping[str, Any]   # temperature/seed varsa sabit [VERIFY]
+    model_requested: str                  # /v1/models'ten seçilen isim (alias olabilir)
     state: Mapping[str, Any]; state_hash: str
     t_sent: int; deadline: int
+    # HTTP body: {"model": model_requested, "state": state, "questions": [...]}
 
 @dataclass(frozen=True, slots=True)
 class JudgeResult:
     request_id: str; status: Literal["ok","timeout","error","late","invalid","cache_hit"]
-    probs: Mapping[str, float]          # noul: {"trade_success": 0.61}; choice: {"direction_h.up": 0.5, ...}
-    confidence: Mapping[str, float]     # API sağlıyorsa
+    model_returned: str | None            # response.model
+    probs: Mapping[str, float]            # noul: {"trade_success": 0.61}; choice: {"direction_h.up": 0.5, ...}
+    confidence: Mapping[str, float]       # choice/score confidence
+    usage: Mapping[str, Any]              # response.usage
     raw: Mapping[str, Any]; latency_ms: int; t_received: int
 ```
 
@@ -533,13 +598,12 @@ class JevJudge:
 ### 7.5 Cache
 
 ```
-cache_key = sha256( canonical_json(state) ‖ questionset_version ‖ prompt_hash
-                    ‖ model_id ‖ model_version ‖ canonical_json(sampling) )
-value     = {raw_response, probs, latency_ms, t_first_seen, variant}
+cache_key = sha256( canonical_json(state) ‖ questionset_version ‖ prompt_hash ‖ model_requested )
+value     = {raw_response, probs, model_returned, usage, latency_ms, t_first_seen, variant}
 ```
 - Key'de ve value'da **outcome/label bilgisi yok**; `t_first_seen` sadece audit içindir.
 - Live: yalnızca aynı-state dedup (nadiren isabet eder).
-- Replay: (a) `cache_only` modu shadow döneminde kaydedilmiş cevapları *aynen* tekrar oynatır → farklı policy eşiklerini Jev'i yeniden çağırmadan test etmek (ana kullanım). (b) `model_version` uyuşmazlığı → miss (asla farklı sürümün cevabı kullanılmaz).
+- Replay: (a) `cache_only` modu shadow döneminde kaydedilmiş cevapları *aynen* tekrar oynatır → farklı policy eşiklerini Jev'i yeniden çağırmadan test etmek (ana kullanım). (b) Cache kaydının `model_returned` değeri, değerlendirilen dönemin referans `model_returned` değeriyle uyuşmazsa → miss (asla farklı modelin cevabı kullanılmaz). Aynı string'in aynı davranış olduğu varsayılmaz; §8.6 drift kontrolleri replay dönemleri için de raporlanır.
 - Nondeterminism: cache replay'de reproducibility sağlar ama modelin varyansını gizler → test-retest ayrıca ölçülür (§8.6).
 
 ### 7.6 Ek tutarlılık testleri (offline, günlük örneklem)
@@ -597,7 +661,9 @@ Not: Jev olasılıkları dar bir aralıkta kümelenebilir (ör. hepsi 0.55–0.7
 ### 8.6 Test-retest & drift
 - Günlük 50 rastgele geçmiş state × 3 tekrar (cache bypass) → `std(p)` dağılımı. Medyan std > 0.05 → k-sample averaging (maliyet × k) değerlendirilir.
 - **PSI** (haftalık, raw p dağılımı, 10 bin, referans = önceki 4 hafta): `PSI = Σ (a_i − e_i)·ln(a_i/e_i)`; > 0.10 WARN, > 0.25 ALARM → B arm'ları CAUTION + refit.
-- `model_version` değişikliği (API response'unda raporlanıyorsa) → otomatik ALARM, B arm'ları yeni entry durdurur, yeni sürüm için shadow kalibrasyonu baştan.
+- Response `model` (`model_returned`) değişikliği → otomatik ALARM, B arm'ları yeni entry durdurur, yeni model için shadow kalibrasyonu baştan.
+- Model pinning garanti olmadığı için (§7.3) `model_returned` sabit kalsa bile PSI + test-retest **zorunlu** ve sürekli çalışır; sessiz davranış değişikliğine karşı tek savunma budur.
+- `GET /v1/models` saatlik sorgulanır; seçili modelin listeden kalkması veya yeni versioned isim çıkması loglanır/uyarılır.
 
 ---
 
@@ -642,7 +708,7 @@ Arm kaynakları:
 |---|---|---|
 | A0 | none | Gate yok: eligibility + geometry + cost_R geçen her proposal ENTER (risk limitleri dahilinde). Setup'ların ham edge'i. |
 | A1 | `ml` | Walk-forward logistic regression (Faz 2), sonra LightGBM; aynı f.v1 feature'ları + family + regime |
-| R | `random` | `P(enter) = pass_rate_B` (son 7g), `u = hash(proposal_id, seed) / 2^64` → reproducible |
+| R | `random` | `P(enter) = pass_rate_B(t)`, **causal**: yalnızca `t_decision < t` olan B kararlarından, trailing 7 gün (`ENTER+ARM` / tüm B kararları). Mevcut tick, mevcut değerlendirme penceresi veya gelecek B sonuçları **kullanılmaz**. Trailing pencerede < 200 B kararı varsa R arm HOLD (warmup). `u = hash(proposal_id, seed) / 2^64` → reproducible |
 | B | `jev` | Jev `trade_success` calibrated + `abnormal_risk` veto |
 | B+ | `stack` | logistic: `logit p = w0 + w1·logit(p_ml) + w2·logit(p_jev)` (+ veto) |
 | C | `jev_direction` | Side = Jev `direction_h`'dan (`P(up) − P(down) ≥ δ=0.2` [CAL]); geometri family template'inden; p = calibrated P(side yönünde up/down) ile aynı EV formülü (R_tp/stop aynı) |
@@ -797,7 +863,7 @@ Karar kriteri: net R/trade ve R-cinsinden maxDD; win-rate değil.
 | Market spread shock | universe medyan `spread_pctile_24h > 0.95` | yeni entry yok (koşul + 10 dk) |
 | Stale universe | STALE sembol oranı > %10 | CAUTION; > %25 → REDUCE_ONLY |
 | Realized slippage drift | son 20 fill ortalama slippage > 2 × model | CAUTION; > 3× → REDUCE_ONLY |
-| Jev drift | PSI > 0.25 veya model_version değişti | B/B+/C arm'ları yeni entry yok |
+| Jev drift | PSI > 0.25 veya response `model` değişti | B/B+/C arm'ları yeni entry yok |
 | Funding extreme | sembol `|funding| > 0.3%/interval` | o sembol ineligible |
 
 ### 10.8 Leverage
@@ -847,14 +913,20 @@ class ExecutionAdapter(Protocol):
 2. entry: LIMIT IOC @ entry_ref·(1 + s·max_slip_bps/1e4)       max_slip_bps = min(0.1R_bps, 15)  [CAL]
    (market yerine IOC: slippage üst sınırlı; partial fill kabul)
 3. ORDER_TRADE_UPDATE fill(s) → filled_qty, avg_price
-4. hemen: STOP_MARKET  reduceOnly/closePosition, workingType=MARK_PRICE, priceProtect=TRUE
-          TAKE_PROFIT_MARKET aynı şekilde                                 [VERIFY: Binance conditional
-          order'ları 2025 sonunda Algo Order API'ye taşıdığını duyurdu; endpoint & parametreleri doğrula]
-5. stop ACK ≤ 2 s bekle; yoksa 1 kez retry; 5 s'de hâlâ yoksa → reduce-only market close + CAUTION   [FIX]
+4. hemen: STOP_MARKET (closePosition/reduceOnly, workingType=MARK_PRICE, priceProtect=TRUE)
+          ve TAKE_PROFIT_MARKET → **Algo Order API** üzerinden (aşağıya bakın)
+5. stop ACK (`ALGO_UPDATE` veya REST response) ≤ 2 s bekle; yoksa 1 kez retry; 5 s'de hâlâ yoksa → reduce-only market close + CAUTION   [FIX]
 6. SL veya TP fill → diğer protective order'ı cancel; position CLOSED
 7. time stop: t_entry + horizon → cancel protections → reduce-only market close
 ```
 `newClientOrderId = f"{arm}{leg}-{proposal_id[-16:]}-{attempt}"` (≤ 36 karakter `[VERIFY]`) → idempotency ve restart sonrası eşleşme.
+
+**Conditional emirler — Algo service migration (Aralık 2025, doğrulandı):**
+- Normal (non-Portfolio-Margin) USDⓈ-M hesaplarında `STOP`, `STOP_MARKET`, `TAKE_PROFIT`, `TAKE_PROFIT_MARKET`, `TRAILING_STOP_MARKET` emirleri **`POST /fapi/v1/algoOrder`** ile gönderilir. Bu tipleri eski `POST /fapi/v1/order`'a göndermek `-4120 STOP_ORDER_SWITCH_ALGO` hatası döndürebilir → adapter bu tipleri hiçbir koşulda normal order endpoint'ine göndermez (unit test ile zorlanır).
+- Sorgu/iptal: ilgili `/fapi/v1/algoOrder` (query/cancel) ve açık algo emir listesi endpoint'leri. Parametre adları (`algoType`, `triggerPrice`, client algo id alanı vb.) implementasyon anında güncel dokümandan alınır `[VERIFY: parametre adları]`.
+- User data stream'de conditional emir yaşam döngüsü **`ALGO_UPDATE`** event'i ile gelir; tetiklenen algo emrin ürettiği gerçek emir/fill ise `ORDER_TRADE_UPDATE` ile. Adapter iki event'i algo id ↔ order id üzerinden birleştirir.
+- Normal entry (`LIMIT IOC`, `MARKET`) emirleri `POST /fapi/v1/order`'da kalır.
+- **Portfolio Margin `/papi/...` endpoint'leri kullanılmaz ve `/fapi/...` ile karıştırılmaz**; hesap tipi startup'ta doğrulanır, PM hesabı tespit edilirse adapter başlamaz.
 
 Birden fazla arm aynı gerçek hesapta **çalıştırılmaz**: testnet/live'da tek arm (seçilen); diğer arm'lar paper olarak aynı feed üzerinde paralel devam eder.
 
@@ -876,13 +948,15 @@ Live'a geçişte **implementation shortfall** = live fill − paper-model fill (
 
 ### 11.4 Reconciler (30 s + her user-stream reconnect'te)
 
+Snapshot = `positionRisk` + açık normal emirler (`/fapi/v1/openOrders`) + **açık algo emirler** (Algo API). Protective stop kontrolü algo emir listesine göre yapılır.
+
 | Durum | Aksiyon |
 |---|---|
 | Exchange'de pozisyon var, local yok | adopt (qty/side/entry exchange'den), protective stop yoksa ATR-bazlı acil stop koy, state ≥ REDUCE_ONLY, alarm |
 | Local var, exchange'de yok | fills/`userTrades` sorgula → kapanışı kaydet |
 | Qty uyuşmazlığı | exchange doğru kabul edilir; local düzeltilir; alarm |
 | Pozisyonda protective stop yok | hemen yerleştir; başarısızsa reduce-only close |
-| Yetim reduce-only emir (pozisyon yok) | cancel |
+| Yetim reduce-only / algo emir (pozisyon yok) | cancel (algo emirler Algo API ile) |
 | 3 ardışık reconcile hatası | REDUCE_ONLY |
 
 User data stream: listenKey keepalive 30 dk'da bir `[VERIFY: 60 dk expiry]`; keepalive hatası → yeni listenKey + reconcile.
@@ -908,14 +982,14 @@ CREATE TABLE proposals (
   proposal_id TEXT PRIMARY KEY, run_id TEXT REFERENCES runs, t_decision BIGINT NOT NULL,
   symbol TEXT NOT NULL, family TEXT NOT NULL, family_version TEXT NOT NULL, side SMALLINT NOT NULL,
   entry_ref DOUBLE PRECISION, stop_price DOUBLE PRECISION, tp_price DOUBLE PRECISION,
-  stop_dist_bps REAL, r_tp REAL, horizon_s INT, cost_rt_bps REAL, cost_r REAL,
+  trigger_level DOUBLE PRECISION, structural_stop_used BOOLEAN, stop_dist_bps REAL, r_tp REAL, horizon_s INT, cost_rt_bps REAL, cost_r REAL,
   scanner_score REAL, scanner_rank SMALLINT, regime TEXT, is_recall_control BOOLEAN DEFAULT FALSE,
   reasons JSONB, features JSONB, feature_schema TEXT, frame_ref TEXT);
 CREATE INDEX ON proposals (t_decision); CREATE INDEX ON proposals (symbol, t_decision);
 
 CREATE TABLE judge_requests (
   request_id TEXT PRIMARY KEY, proposal_id TEXT REFERENCES proposals, variant TEXT NOT NULL,
-  questionset_version TEXT, prompt_hash TEXT, model_id TEXT, model_version TEXT, sampling JSONB,
+  questionset_version TEXT, prompt_hash TEXT, model_requested TEXT, model_returned TEXT, usage JSONB,
   state JSONB NOT NULL, state_hash TEXT NOT NULL, t_sent BIGINT, t_received BIGINT, latency_ms INT,
   status TEXT NOT NULL, raw_response JSONB, error TEXT);
 CREATE INDEX ON judge_requests (state_hash);
@@ -1088,7 +1162,8 @@ Aynı proposal kümesi P (canonical Jev status=ok olanlar), holdout dönemi:
   H1 (incremental info): Δ LogLoss = LL(A1) − LL(B+) > 0
       → day-block bootstrap (10k), one-sided 95%; + Diebold-Mariano (günlük loss farkı, HAC)
   H2 (filter value vs random): lift_B = mean(net_R | B accept) − mean(net_R | all)
-      → 1000 random filter (aynı pass rate) dağılımında lift_B'nin percentile'ı > 95
+      → 1000 random filter dağılımında lift_B'nin percentile'ı > 95; random filtrenin her karardaki
+        geçiş olasılığı canlı R arm'ı ile aynı **causal** `pass_rate_B(t)` (yalnızca t öncesi B kararları)
   H3 (Jev vs ML): lift_B vs lift_A1 aynı pass rate'e ayarlanmış (threshold matching)
 Destekleyici:
   - Stacked logistic: y ~ logit(p_ml) + logit(p_jev); w_jev katsayısı, gün-cluster'lı SE
@@ -1201,8 +1276,10 @@ run: {mode: shadow, decision_tf: 5m, bar_grace_ms: 1500, decision_deadline_ms: 4
 universe: {min_quote_vol_24h: 20_000_000, max_rank: 200, exit_rank: 230, min_listing_age_d: 14}
 fees: {taker_bps: 5.0, maker_bps: 2.0}          # [VERIFY]
 jev:
-  model_id: "jev"            # [VERIFY]
-  model_version: "pinned-..." # [VERIFY]
+  base_url: https://api.typesafe.ai
+  endpoint: /v1/systemone
+  models_endpoint: /v1/models
+  model_preference: [versioned, alias]   # startup'ta /v1/models'ten seçilir; pinning garanti değil (§7.3)
   questionset: qs.v1
   state_schema: state.v1
   timeout_ms: 1500
@@ -1220,7 +1297,7 @@ pol.v1:
   arms:
     A0:     {source: none}
     A1:     {source: ml}
-    R:      {source: random, seed: 1729, pass_rate_from: B, window_d: 7}
+    R:      {source: random, seed: 1729, pass_rate_from: B, window_d: 7, causal: true, min_history: 200}
     B:      {source: jev, use_abnormal_veto: true, theta_abnormal: 0.30}
     B_plus: {source: stack, use_abnormal_veto: true, theta_abnormal: 0.30}
     C:      {source: jev_direction, delta_min: 0.20}

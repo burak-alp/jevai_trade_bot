@@ -64,7 +64,7 @@ Risk, stop mesafesine göre sizing ile belirlenirse leverage *riski değiştirme
 Disagreement tetiklemeli analyst: latency ekler, nadir tetiklendiği için kalibre edilemez, seçim yanlılığı yaratır ve subscription UI ile 7/24 bağımlılık imkânsız. → MVP'den tamamen çıkarılır; sadece offline haftalık post-mortem/raporlama aracı olabilir.
 
 **12. Jev vendor riski.**
-Model 11 günlük. Fiyat, API şeması, latency ve *model davranışı* sessizce değişebilir → kalibrasyon kırılır. → Model version pinning, çıktı dağılımı drift monitörü (PSI), ve Jev'in "distilled" ML kopyası fallback olarak (bkz. D.4).
+Model 11 günlük. Fiyat, API şeması, latency ve *model davranışı* sessizce değişebilir → kalibrasyon kırılır. → TypeSafe API ayrı bir `model_version` alanı sunmuyor (response yalnızca `model` string'i döndürüyor, alias'tan farklı olabilir), yani **tam pinning garanti değil**. Bu yüzden: `/v1/models` ile mümkünse versioned isim seçimi, her request'te response `model` değerinin saklanması, zorunlu çıktı dağılımı drift monitörü (PSI + test-retest) ve Jev'in "distilled" ML kopyası ayrı arm olarak (bkz. D.4, Spec §7.3).
 
 ### A.3 Soru bazında değerlendirme (taslaktaki 8 atomic question)
 
@@ -102,7 +102,7 @@ MVP'de Jev'e **proposal başına 2 soru** (`trade_success`, `abnormal_risk`). Az
 | 4 | **Market factor (BTC) konsantrasyonu** | Korelasyonlu çöküşte 3 pozisyon birden stop, slippage ile > 3R kayıp | Beta-weighted exposure, cluster limitleri, gap-risk budget |
 | 5 | **Paper fill modeli fazla iyimser** | Paper kârlı, live zararlı | Pessimistic taker model, stop slippage modeli, live implementation-shortfall ölçümü |
 | 6 | **Korumasız pozisyon** (stop gönderilemedi, listenKey düştü, reconnect) | Sınırsız kayıp | Native stop zorunlu, fill→stop onayı ≤ 2s yoksa market close, reconciliation loop |
-| 7 | **Jev drift / API değişikliği** | Kalibrasyon sessizce bozulur | Version pin, PSI monitör, rolling calibration, distilled fallback |
+| 7 | **Jev drift / API değişikliği** | Kalibrasyon sessizce bozulur | Versioned model adı (mümkünse) + response `model` loglama, zorunlu PSI/test-retest monitör, rolling calibration |
 | 8 | **Survivorship bias** | Delist olan coinler dışlanınca backtest şişer | Point-in-time universe, delisted semboller dahil |
 | 9 | **Silent WS stall** (bağlantı açık, veri yok) | Stale data ile karar | Stream başına heartbeat, event-time lag izleme |
 | 10 | **Jev directional bias** (LLM'lerde sık görülen "bullish" bias) | Long/short asimetrisi | Side-canonicalized state + mirror consistency test |
@@ -187,7 +187,7 @@ Temel değişiklikler (taslağa göre):
 ```
 Jev: (CanonicalState, QuestionSet vN) → {question_id: probability}
 ```
-- Girdi: tek bir TradeProposal'a ait, anonim, side-canonicalized, normalize edilmiş ~25 feature.
+- Girdi: tek bir TradeProposal'a ait, anonim, side-canonicalized, normalize edilmiş ~25 feature **+ proposal geometrisi** (stop_dist_atr/bps, tp_R, horizon, cost_R, trigger_distance_atr). Geometri olmadan "TP, SL'den önce mi?" sorusu tanımsızdır.
 - Çıktı: yalnızca olasılıklar. Fiyat, miktar, leverage, stop, TP **asla** istenmez/kabul edilmez.
 - Kullanım yetkisi: **filtre (gate) ve veto**. Jev bir proposal'ı *geçirebilir* veya *engelleyebilir*; proposal *yaratamaz*, side'ı *değiştiremez*, size'ı *büyütemez*.
 - Jev yokluğunda (timeout/hata/stale): Bot B için karar = HOLD (yeni pozisyon yok). Mevcut pozisyonlar deterministic yönetim + native stop ile devam.
@@ -208,7 +208,7 @@ Jev'in çıktılarını hedef alan bir GBM'i aynı feature'lar üzerinde eğit (
 ### D.4 Fallback hiyerarşisi (Bot B için)
 
 ```
-Jev OK (latency < timeout, model_version == pinned)  → calibrated Jev p
+Jev OK (latency < timeout, response model == referans model)  → calibrated Jev p
 Jev down / timeout                                     → HOLD (yeni entry yok)
 Jev drift alarmı (PSI > 0.25)                          → CAUTION: B arm yeni entry durdurur, kalibrasyon refit + inceleme
 ```
@@ -301,7 +301,7 @@ Risk engine **state machine**: `NORMAL → CAUTION → REDUCE_ONLY → HALTED` (
 |---|---|---|
 | **A0** | Tüm proposal'lar (filtre yok), EV gate'te sadece prior p | Setup'ların kendisi net pozitif mi? |
 | **A1** | A0 + ML meta-labeler (logistic → GBM), walk-forward | Güçlü quant baseline |
-| **R** | A0 + random filter, B ile aynı geçiş oranı | "Az trade etmek" etkisi |
+| **R** | A0 + random filter; geçiş oranı yalnızca karar anından **önceki** B kararlarından (trailing 7g, causal) | "Az trade etmek" etkisi |
 | **B** | A0 + Jev calibrated p (+ abnormal veto) | Jev filtre değeri |
 | **B+** | A1 modeline Jev p'yi feature olarak ekle (stacking) | Jev ML'e *incremental* bilgi katıyor mu? — **asıl soru** |
 | **C** | Jev direction-led (Jev side seçer, geometri deterministic) | Directional Jev deneysel |
