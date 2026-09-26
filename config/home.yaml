@@ -1,0 +1,10 @@
+# Home-PC profile (residential internet, Windows). Overlay on base.yaml:
+#   jevbot record --config config/base.yaml --config config/home.yaml ...
+# Goal: keep bandwidth well below the line capacity so feed latency stays low.
+binance:
+  ws:
+    compression: true               # permessage-deflate; JSON shrinks several-fold if the server accepts it
+recorder:
+  book_ticker_max_symbols: 100      # bookTicker is ~90 % of traffic; top-100 by volume
+  depth:
+    top_n_by_volume: 10

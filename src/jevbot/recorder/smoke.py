@@ -110,8 +110,10 @@ async def _check_route(cfg: AppConfig, route: str, plan: dict[str, Any], timeout
 
     try:
         async with connect(url, open_timeout=ws_cfg.open_timeout_s, max_size=ws_cfg.max_message_bytes,
-                           compression=None, ping_interval=None, max_queue=4096) as ws:
+                           compression="deflate" if ws_cfg.compression else None, ping_interval=None,
+                           max_queue=4096) as ws:
             detail["connect_ms"] = mono_ms() - t0
+            detail["extensions"] = [type(e).__name__ for e in (getattr(ws.protocol, "extensions", None) or [])]
             if plan["subscribe"]:
                 stage = "subscribe"
                 await ws.send(orjson.dumps({"method": "SUBSCRIBE", "params": plan["subscribe"], "id": 1}).decode())

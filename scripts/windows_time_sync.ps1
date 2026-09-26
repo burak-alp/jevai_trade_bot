@@ -1,0 +1,12 @@
+# One-time Windows clock setup for the recorder (run PowerShell *as Administrator*).
+# Default Windows time sync polls rarely; the PC drifted ~0.5 s per hour in the 1 h test.
+# This polls NTP every 64 s so the offset stays well under 500 ms.
+$ntp = "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient"
+w32tm /config /manualpeerlist:"time.google.com,0x9 time.cloudflare.com,0x9 time.windows.com,0x9" /syncfromflags:manual /reliable:no /update
+Set-ItemProperty -Path $ntp -Name SpecialPollInterval -Value 64
+Set-Service w32time -StartupType Automatic
+Restart-Service w32time
+Start-Sleep -Seconds 3
+w32tm /resync /force
+w32tm /query /status
+w32tm /stripchart /computer:time.google.com /samples:5 /dataonly

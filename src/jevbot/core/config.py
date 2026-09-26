@@ -107,6 +107,7 @@ class RecorderConfig:
     kline_1m: bool = True
     mark_price: bool = True
     book_ticker: bool = True
+    book_ticker_max_symbols: int = 0     # 0 = all universe members; N = only the N highest-volume symbols
     force_order: bool = True
     depth: DepthConfig = field(default_factory=DepthConfig)
     oi: OiConfig = field(default_factory=OiConfig)

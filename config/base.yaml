@@ -65,6 +65,7 @@ recorder:
   kline_1m: true
   mark_price: true
   book_ticker: true
+  book_ticker_max_symbols: 0        # 0 = all members; home profile limits bandwidth (config/home.yaml)
   force_order: true
   depth:
     enabled: true

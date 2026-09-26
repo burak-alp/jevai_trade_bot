@@ -47,6 +47,7 @@ class ConnStats:
     rotations: int = 0
     silence_reconnects: int = 0
     silent_but_alive: int = 0
+    compression: bool = False            # permessage-deflate negotiated with the server
     stale_reconnects: int = 0
     control_sent: int = 0
     control_errors: int = 0
@@ -254,7 +255,10 @@ class WsConnection:
         if st.disconnect_log and st.disconnect_log[-1][1] is None:
             t_down, _, r = st.disconnect_log[-1]
             st.disconnect_log[-1] = (t_down, st.connected_since_ms, r)
-        log.info("ws_connected", conn=self.name, route=self.route, streams=len(self._streams), rotated=rotated)
+        ext = [type(e).__name__ for e in (getattr(ws.protocol, "extensions", None) or [])]
+        st.compression = bool(ext)
+        log.info("ws_connected", conn=self.name, route=self.route, streams=len(self._streams), rotated=rotated,
+                 extensions=ext)
         self._emit_state("connected", rotated=rotated)
 
     def _deliver(self, raw: bytes | str) -> None:

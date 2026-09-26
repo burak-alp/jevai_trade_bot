@@ -182,14 +182,22 @@ class Recorder:
             streams.append(ep.MARK_PRICE_ALL)
         if rc.force_order:
             streams.append(ep.FORCE_ORDER_ALL)
+        book = set(self._book_symbols())
         for s in self.members:
             if rc.kline_1m:
                 streams.append(ep.kline_stream(s))
-            if rc.book_ticker:
+            if s in book:
                 streams.append(ep.book_ticker_stream(s))
         if rc.depth.enabled:
             streams += [ep.depth_stream(s, rc.depth.levels, rc.depth.speed) for s in self.depth_symbols]
         return streams
+
+    def _book_symbols(self) -> list[str]:
+        """Members (volume-ranked) that get a bookTicker stream."""
+        rc = self.cfg.recorder
+        if not rc.book_ticker:
+            return []
+        return self.members[:rc.book_ticker_max_symbols] if rc.book_ticker_max_symbols > 0 else list(self.members)
 
     async def _refresh_universe(self, initial: bool = False) -> None:
         info = await self.rest.exchange_info()
@@ -471,8 +479,9 @@ class Recorder:
 
     def _health_snapshot(self) -> dict[str, Any]:
         t = now_ms()
-        book_expected = len(self.members) if self.cfg.recorder.book_ticker else 0
-        book_fresh = sum(1 for s in self.members if t - self.book_last_recv.get(s, 0) <= 10_000)
+        book_syms = self._book_symbols()
+        book_expected = len(book_syms)
+        book_fresh = sum(1 for s in book_syms if t - self.book_last_recv.get(s, 0) <= 10_000)
         return self.health.snapshot(
             conns=self.pool.connections(), counters=self.counters, symbols_universe=len(self.members),
             kline_fresh=self.klines.fresh_count(t, int(self.cfg.recorder.kline_grace_s * 1000))
@@ -503,6 +512,7 @@ class Recorder:
                                       "silent_but_alive": c.stats.silent_but_alive,
                                       "stale_reconnects": c.stats.stale_reconnects,
                                       "lag_ewma_ms": round(c.lag_ewma_ms, 1),
+                                      "compression": c.stats.compression,
                                       "last_disconnect_reason": c.stats.last_disconnect_reason}
                                      for c in self.pool.connections()],
                      "smoke_ok": self.health.smoke_ok}

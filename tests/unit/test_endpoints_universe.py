@@ -52,3 +52,14 @@ def test_universe_rules_and_hysteresis():
     # C was a member before and is within exit_rank -> kept over newcomer B
     members2, _ = select_universe(info, tick, cfg, now, previous={"AUSDT", "CUSDT"})
     assert members2 == ["AUSDT", "CUSDT"]
+
+
+def test_book_ticker_max_symbols_limits_streams(tmp_path):
+    from jevbot.recorder.recorder import Recorder
+    cfg = load_config(["config/base.yaml", "config/home.yaml"], [f"data_dir={tmp_path}", f"run_dir={tmp_path}"])
+    rec = Recorder(cfg)
+    rec.members = [f"S{i}USDT" for i in range(150)]
+    streams = rec._desired_streams()
+    assert sum(s.endswith("@bookTicker") for s in streams) == 100
+    assert sum(s.endswith("@kline_1m") for s in streams) == 150
+    assert cfg.binance.ws.compression is True
