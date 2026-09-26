@@ -126,7 +126,7 @@ def verify_tree(root: Path) -> VerifyReport:
     for mf in root.rglob("_manifest.jsonl"):
         manifests[mf.parent] = read_manifest(mf.parent)
     seen: set[tuple[Path, str]] = set()
-    for p in sorted(root.rglob("*.parquet")):
+    for p in sorted([*root.rglob("*.parquet"), *root.rglob("*.json.gz")]):
         rel = str(p.relative_to(root))
         dataset_dir = next((d for d in manifests if d in p.parents), None)
         man_key = str(p.relative_to(dataset_dir)) if dataset_dir else None
@@ -136,6 +136,12 @@ def verify_tree(root: Path) -> VerifyReport:
             continue
         if sha256_file(p) != expected:
             rep.checksum_mismatch.append(rel)
+            continue
+        if p.name.endswith(".json.gz"):
+            rep.files_ok += 1
+            rep.bytes_ok += p.stat().st_size
+            if dataset_dir is not None:
+                seen.add((dataset_dir, man_key))
             continue
         try:
             md = pq.read_metadata(p)

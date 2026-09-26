@@ -8,3 +8,5 @@ __pycache__/
 /logs/
 *.parquet.tmp
 config/local*.yaml
+/data-fake/
+/run-fake/
