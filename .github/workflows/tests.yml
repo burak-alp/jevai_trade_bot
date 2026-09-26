@@ -1,0 +1,23 @@
+name: tests
+on:
+  push:
+    branches: ["claude/**", "main", "local/**"]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  pytest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip freeze
+      - run: python -m pytest -q -rA --durations=10
