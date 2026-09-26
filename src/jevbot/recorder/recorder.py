@@ -26,7 +26,7 @@ from jevbot.marketdata.binance_rest import BinanceRest, RateLimited
 from jevbot.marketdata.binance_ws import WsConnection, WsPool
 from jevbot.marketdata.parsers import decode_frame, parse_payload
 from jevbot.marketdata.universe import select_universe
-from jevbot.recorder.aggregators import BookTicker1s, DepthSampler, LatencyAggregator, MarkDedup
+from jevbot.recorder.aggregators import BookTicker1s, DepthSampler, IntervalQuantiles, LatencyAggregator, MarkDedup
 from jevbot.recorder.gaps import KlineTracker
 from jevbot.recorder.health import Counters, HealthMonitor, STOPPED
 from jevbot.recorder.integrity import append_manifest, quarantine_orphans, sha256_file, write_sidecar
@@ -65,6 +65,10 @@ class Recorder:
         self.depth = DepthSampler(int(cfg.recorder.depth.sample_interval_s * 1000))
         self.mark = MarkDedup()
         self.latency = LatencyAggregator()
+        self.lat_interval = IntervalQuantiles()
+        self.loop_lag = IntervalQuantiles(max_samples=5000)
+        self._last_rows_written = 0
+        self._last_health_mono = mono_ms()
         self.members: list[str] = []
         self.member_set: set[str] = set()
         self.depth_symbols: list[str] = []
@@ -111,6 +115,7 @@ class Recorder:
             self.pool.set_streams(self._desired_streams())
             self.pool.start()
             self._spawn(self._flush_loop(), "flush")
+            self._spawn(self._loop_lag_monitor(), "loop-lag")
             self._spawn(self._health_loop(), "health")
             self._spawn(self._kline_watchdog(), "kline-watchdog")
             self._spawn(self._time_sync_loop(), "time-sync")
@@ -278,10 +283,11 @@ class Recorder:
         elif fam == "depth":
             self._on_depth(ev, conn)
         elif fam == "forceOrder":
-            self.latency.add(fam, conn.route, ev.t_event, t_recv)
+            self._lat(fam, conn.route, ev.t_event, t_recv)
             self.sink.append("force_order", _force_row(ev))
 
     def _lat(self, fam: str, route: str, t_event: int, t_recv: int) -> None:
+        self.lat_interval.add(t_recv - t_event)
         rows = self.latency.add(fam, route, t_event, t_recv)
         if rows:
             self.sink.extend("latency_1m", rows)
@@ -429,6 +435,31 @@ class Recorder:
             self.sink.extend("book_1s", self.book.flush_older_than(t - t % 1000 - 2000))
             self.sink.flush(t)
 
+    async def _loop_lag_monitor(self) -> None:
+        """Event-loop responsiveness: overshoot of a 50 ms sleep."""
+        while True:
+            t0 = mono_ms()
+            await asyncio.sleep(0.05)
+            self.loop_lag.add(max(0, mono_ms() - t0 - 50))
+
+    def _perf(self) -> dict[str, Any]:
+        lat = self.lat_interval.take()
+        ll = self.loop_lag.take()
+        rows = self.sink.stats.total("rows_written")
+        dt = max(1e-3, (mono_ms() - self._last_health_mono) / 1000)
+        rate = (rows - self._last_rows_written) / dt
+        self._last_rows_written, self._last_health_mono = rows, mono_ms()
+        return {
+            "lat_n": lat["n"], "lat_p50_ms": lat["p50"], "lat_p95_ms": lat["p95"], "lat_p99_ms": lat["p99"],
+            "lat_max_ms": lat["max"], "loop_lag_p50_ms": ll["p50"], "loop_lag_p99_ms": ll["p99"],
+            "loop_lag_max_ms": ll["max"], "sink_buffered_rows": self.sink.buffered_rows(),
+            "open_files": self.sink.open_files(), "writer_rows_per_s": round(rate, 1),
+            "duplicates_total": self.book.duplicates + self.depth.duplicates + self.mark.duplicates
+            + self.klines.duplicates,
+            "invalid_total": self.book.invalid, "late_rows_total": self.sink.stats.total("late_rows"),
+            "oi_polls_total": self.counters.oi_polls, "rest_requests_total": self.rest.weights.requests,
+        }
+
     def _health_snapshot(self) -> dict[str, Any]:
         t = now_ms()
         book_expected = len(self.members) if self.cfg.recorder.book_ticker else 0
@@ -439,7 +470,8 @@ class Recorder:
             if self.cfg.recorder.kline_1m else len(self.members),
             book_fresh=book_fresh, book_expected=book_expected, sink=self.sink,
             clock_offset_ms=self.clock.offset_ms, rest_weights=self.rest.weights,
-            writer_error=self.sink.writer_error())
+            writer_error=self.sink.writer_error(), perf=self._perf(),
+            lag_warn_ms=self.cfg.recorder.lag_warn_ms, loop_lag_warn_ms=self.cfg.recorder.loop_lag_warn_ms)
 
     async def _health_loop(self) -> None:
         rc = self.cfg.recorder
@@ -462,7 +494,9 @@ class Recorder:
                 log.info("health", **{k: snap[k] for k in ("status", "msgs_per_s", "cpu_pct", "rss_mb",
                                                           "conns_connected", "conns_total", "symbols_universe",
                                                           "symbols_kline_fresh", "symbols_book_fresh",
-                                                          "rows_written_total", "parquet_bytes_total", "detail")})
+                                                          "lat_p50_ms", "lat_p99_ms", "loop_lag_p99_ms",
+                                                          "sink_buffered_rows", "rows_written_total",
+                                                          "parquet_bytes_total", "detail")})
 
     def _write_smoke_report(self) -> None:
         if self.smoke is None:

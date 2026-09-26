@@ -12,6 +12,7 @@ from jevbot.marketdata.binance_ws import WsConnection
 from jevbot.marketdata.parsers import decode_frame
 from jevbot.recorder.integrity import verify_tree
 from jevbot.recorder.recorder import EXIT_OK, EXIT_SMOKE_FAILED, Recorder
+from jevbot.recorder.report import build_report, to_markdown
 from jevbot.recorder.smoke import run_smoke
 
 from .conftest import make_cfg
@@ -83,6 +84,15 @@ async def test_recorder_end_to_end(fake, tmp_path):
     status = orjson.loads((tmp_path / "run" / "recorder_health.json").read_bytes())
     assert status["status"] == "STOPPED"
     assert list((raw / "exchange_info").rglob("*.json.gz"))
+    h = health.to_pylist()[-2]
+    assert h["lat_n"] > 0 and h["lat_p50_ms"] >= 0 and h["loop_lag_p99_ms"] >= 0
+    assert h["writer_rows_per_s"] >= 0 and h["oi_polls_total"] > 0
+    rep = build_report(tmp_path / "data", tmp_path / "run")
+    assert rep["acceptance"]["smoke_ok"] and rep["acceptance"]["integrity_ok"]
+    assert rep["acceptance"]["no_schema_errors"] and rep["websocket"]["reconnects"] >= 1
+    assert rep["datasets"]["book_1s"]["rows"] == book.num_rows
+    assert rep["exchange_rate_limits"][0]["limit"] == 2400
+    assert "Acceptance" in to_markdown(rep)
 
 
 async def _collect(conn_cfg, fake, streams, **ws_over):

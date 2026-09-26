@@ -42,6 +42,16 @@ def test_latency_aggregator_rolls_per_minute():
         assert la.add("kline", "market", 60_000 + i, 60_000 + i + (i % 100)) == []
     rows = la.add("kline", "market", 120_000, 120_010)
     assert len(rows) == 1
-    t_min, fam, route, n, n_s, mn, p50, p90, p99, mx = rows[0]
+    t_min, fam, route, n, n_s, mn, p50, p90, p95, p99, mx = rows[0]
     assert (t_min, fam, route, n, n_s) == (60_000, "kline", "market", 1000, 100)
-    assert 0 <= mn <= p50 <= p90 <= p99 <= mx <= 99
+    assert 0 <= mn <= p50 <= p90 <= p95 <= p99 <= mx <= 99
+
+
+def test_interval_quantiles_reset():
+    from jevbot.recorder.aggregators import IntervalQuantiles
+    q = IntervalQuantiles(max_samples=50)
+    for i in range(1000):
+        q.add(float(i % 100))
+    r = q.take()
+    assert r["n"] == 1000 and r["max"] == 99 and 0 <= r["p50"] <= r["p95"] <= r["p99"] <= 99
+    assert q.take()["n"] == 0

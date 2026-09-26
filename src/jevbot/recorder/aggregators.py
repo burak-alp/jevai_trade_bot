@@ -178,7 +178,7 @@ class LatencyAggregator:
 
             def q(p: float) -> float:
                 return s[min(n - 1, int(round(p * (n - 1))))]
-            rows.append((self._minute, fam, route, count[0], n, s[0], q(0.5), q(0.9), q(0.99), s[-1]))
+            rows.append((self._minute, fam, route, count[0], n, s[0], q(0.5), q(0.9), q(0.95), q(0.99), s[-1]))
         self._data.clear()
         return rows
 
@@ -188,4 +188,37 @@ class LatencyAggregator:
             if samples:
                 s = sorted(samples)
                 out[f"{fam}/{route}"] = s[min(len(s) - 1, int(0.99 * (len(s) - 1)))]
+        return out
+
+
+class IntervalQuantiles:
+    """Reservoir-sampled distribution over one reporting interval; ``take()`` resets it."""
+
+    def __init__(self, max_samples: int = 20_000, seed: int = 11) -> None:
+        self.max_samples = max_samples
+        self._rng = random.Random(seed)
+        self._s: list[float] = []
+        self._n = 0
+        self._max = float("-inf")
+
+    def add(self, v: float) -> None:
+        self._n += 1
+        if v > self._max:
+            self._max = v
+        if len(self._s) < self.max_samples:
+            self._s.append(v)
+        else:
+            j = self._rng.randrange(self._n)
+            if j < self.max_samples:
+                self._s[j] = v
+
+    def take(self) -> dict[str, float]:
+        s = sorted(self._s)
+        n = len(s)
+
+        def q(p: float) -> float:
+            return s[min(n - 1, int(round(p * (n - 1))))] if n else float("nan")
+        out = {"n": self._n, "p50": q(0.5), "p95": q(0.95), "p99": q(0.99),
+               "max": self._max if n else float("nan")}
+        self._s, self._n, self._max = [], 0, float("-inf")
         return out

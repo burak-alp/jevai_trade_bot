@@ -80,6 +80,8 @@ recorder:
   health_interval_s: 10
   health_log_interval_s: 60
   latency_agg_s: 60
+  lag_warn_ms: 2000                 # feed latency (t_recv - t_event) p99 above this -> DEGRADED
+  loop_lag_warn_ms: 500             # event-loop lag p99 above this -> DEGRADED
   orphan_tmp_quarantine: true
   smoke:
     enabled: true

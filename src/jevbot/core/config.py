@@ -114,6 +114,8 @@ class RecorderConfig:
     health_interval_s: float = 10.0
     health_log_interval_s: float = 60.0
     latency_agg_s: float = 60.0
+    lag_warn_ms: float = 2000.0         # feed latency p99 above this -> DEGRADED
+    loop_lag_warn_ms: float = 500.0     # event-loop lag p99 above this -> DEGRADED
     orphan_tmp_quarantine: bool = True
     smoke: SmokeConfig = field(default_factory=SmokeConfig)
 

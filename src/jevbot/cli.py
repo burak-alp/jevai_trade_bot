@@ -87,6 +87,24 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0 if rep.ok else 5
 
 
+def cmd_recording_report(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.core.time import now_ms
+    from jevbot.recorder.report import build_report, minutes_ago, to_markdown
+
+    cfg = _load(args)
+    since = minutes_ago(args.last_min, now_ms()) if args.last_min else None
+    rep = build_report(Path(cfg.data_dir), Path(cfg.run_dir), since=since)
+    run = Path(cfg.run_dir)
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "recording_report.json").write_bytes(orjson.dumps(rep, option=orjson.OPT_INDENT_2, default=str))
+    md = to_markdown(rep)
+    (run / "recording_report.md").write_text(md)
+    sys.stdout.write(md)
+    return 0 if "error" not in rep else 7
+
+
 def cmd_compact(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -177,6 +195,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.add_argument("--root", default=None, help="directory to verify (default: data_dir)")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("recording-report", help="summarize a recorder run (throughput, latency, gaps, disk, integrity)")
+    _add_common(p)
+    p.add_argument("--last-min", type=float, default=None, help="only the last N minutes (default: everything)")
+    p.set_defaults(func=cmd_recording_report)
 
     p = sub.add_parser("compact", help="merge small recorder parts into hourly/daily sorted files (verified, atomic)")
     _add_common(p)

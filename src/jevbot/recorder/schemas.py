@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pyarrow as pa
 
-SCHEMA_VERSION = "rec.v1"
+SCHEMA_VERSION = "rec.v2"   # v2: extended health + latency p95
 
 i64, f64, s, b, i32 = pa.int64(), pa.float64(), pa.string(), pa.bool_(), pa.int32()
 lf64 = pa.list_(pa.float64())
@@ -47,7 +47,8 @@ SCHEMAS: dict[str, pa.Schema] = {
     # t_recv - t_event per stream family and route, aggregated per minute
     "latency_1m": pa.schema([
         ("t_min", i64), ("family", s), ("route", s), ("n", i64), ("n_sampled", i64),
-        ("lag_min_ms", f64), ("lag_p50_ms", f64), ("lag_p90_ms", f64), ("lag_p99_ms", f64), ("lag_max_ms", f64),
+        ("lag_min_ms", f64), ("lag_p50_ms", f64), ("lag_p90_ms", f64), ("lag_p95_ms", f64), ("lag_p99_ms", f64),
+        ("lag_max_ms", f64),
     ]),
     "gaps": pa.schema([
         ("symbol", s), ("stream", s), ("kind", s), ("t_start", i64), ("t_end", i64),
@@ -59,7 +60,13 @@ SCHEMAS: dict[str, pa.Schema] = {
         ("conns_connected", i32), ("conns_total", i32), ("reconnects_total", i64), ("schema_errors_total", i64),
         ("symbols_universe", i32), ("symbols_kline_fresh", i32), ("symbols_book_fresh", i32),
         ("rows_written_total", i64), ("parquet_bytes_total", i64), ("files_total", i64), ("queue_depth", i32),
-        ("clock_offset_ms", f64), ("rest_weight_used", i32), ("rest_weight_limit", i32), ("detail", s),
+        ("clock_offset_ms", f64), ("rest_weight_used", i32), ("rest_weight_limit", i32),
+        # performance (per health interval)
+        ("lat_n", i64), ("lat_p50_ms", f64), ("lat_p95_ms", f64), ("lat_p99_ms", f64), ("lat_max_ms", f64),
+        ("loop_lag_p50_ms", f64), ("loop_lag_p99_ms", f64), ("loop_lag_max_ms", f64),
+        ("sink_buffered_rows", i64), ("open_files", i32), ("writer_rows_per_s", f64),
+        ("duplicates_total", i64), ("invalid_total", i64), ("late_rows_total", i64),
+        ("oi_polls_total", i64), ("rest_requests_total", i64), ("detail", s),
     ]),
     "universe": pa.schema([
         ("t_asof", i64), ("symbol", s), ("status", s), ("contract_type", s), ("onboard_date", i64),

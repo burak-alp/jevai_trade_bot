@@ -12,7 +12,18 @@ import psutil
 
 from jevbot.core.time import mono_ms, now_ms
 
+from jevbot.recorder.schemas import SCHEMAS
+
 STARTING, HEALTHY, DEGRADED, UNHEALTHY, STOPPED = "STARTING", "HEALTHY", "DEGRADED", "UNHEALTHY", "STOPPED"
+
+NAN = float("nan")
+PERF_DEFAULTS: dict[str, Any] = {
+    "lat_n": 0, "lat_p50_ms": NAN, "lat_p95_ms": NAN, "lat_p99_ms": NAN, "lat_max_ms": NAN,
+    "loop_lag_p50_ms": NAN, "loop_lag_p99_ms": NAN, "loop_lag_max_ms": NAN,
+    "sink_buffered_rows": 0, "open_files": 0, "writer_rows_per_s": 0.0,
+    "duplicates_total": 0, "invalid_total": 0, "late_rows_total": 0, "oi_polls_total": 0,
+    "rest_requests_total": 0,
+}
 
 
 @dataclass
@@ -48,7 +59,9 @@ class HealthMonitor:
 
     def snapshot(self, *, conns: list[Any], counters: Counters, symbols_universe: int, kline_fresh: int,
                  book_fresh: int, book_expected: int, sink: Any, clock_offset_ms: float | None,
-                 rest_weights: Any, writer_error: BaseException | None) -> dict[str, Any]:
+                 rest_weights: Any, writer_error: BaseException | None,
+                 perf: dict[str, Any] | None = None, lag_warn_ms: float = 2000.0,
+                 loop_lag_warn_ms: float = 500.0) -> dict[str, Any]:
         now_m = mono_ms()
         dt = max(1e-3, (now_m - self._last_mono) / 1000)
         self._last_mono = now_m
@@ -86,6 +99,11 @@ class HealthMonitor:
                 problems.append(f"book_stale:{book_expected - book_fresh}")
             if rest_weights is not None and not rest_weights.budget_ok(0):
                 problems.append("rest_budget_exhausted")
+            p = perf or {}
+            if (p.get("lat_p99_ms") or 0) > lag_warn_ms:
+                problems.append(f"feed_lag_p99:{p['lat_p99_ms']:.0f}ms")
+            if (p.get("loop_lag_p99_ms") or 0) > loop_lag_warn_ms:
+                problems.append(f"loop_lag_p99:{p['loop_lag_p99_ms']:.0f}ms")
             if problems and status == HEALTHY:
                 status = DEGRADED
         self.status = status
@@ -109,16 +127,13 @@ class HealthMonitor:
             "rest_weight_limit": rest_weights.limit_per_min if rest_weights else 0,
             "detail": ",".join(problems),
         }
+        snap.update(PERF_DEFAULTS)
+        snap.update(perf or {})
         self.last_snapshot = snap
         return snap
 
     def row(self, snap: dict[str, Any]) -> tuple[Any, ...]:
-        keys = ("t", "status", "uptime_s", "cpu_pct", "rss_mb", "msgs_per_s", "msgs_per_s_public",
-                "msgs_per_s_market", "bytes_per_s", "conns_connected", "conns_total", "reconnects_total",
-                "schema_errors_total", "symbols_universe", "symbols_kline_fresh", "symbols_book_fresh",
-                "rows_written_total", "parquet_bytes_total", "files_total", "queue_depth", "clock_offset_ms",
-                "rest_weight_used", "rest_weight_limit", "detail")
-        return tuple(snap[k] for k in keys)
+        return tuple(snap[f.name] for f in SCHEMAS["health"])
 
     def write_status_file(self, snap: dict[str, Any], extra: dict[str, Any] | None = None) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=True)

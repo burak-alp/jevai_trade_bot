@@ -50,7 +50,7 @@ def test_rotation_checksum_manifest(tmp_path):
     rep = verify_tree(tmp_path)
     assert rep.ok and rep.files_ok == 2 and rep.rows_ok == 8
     assert sm.stats.datasets["kline_1m"].rows_written == 8
-    assert pq.read_schema(files[0]).metadata[b"jevbot_schema"] == b"rec.v1"
+    assert pq.read_schema(files[0]).metadata[b"jevbot_schema"] == b"rec.v2"
 
 
 def test_window_boundary_split_in_one_flush(tmp_path):
