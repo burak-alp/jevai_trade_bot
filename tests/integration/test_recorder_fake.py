@@ -134,12 +134,13 @@ async def test_ws_reconnect_resubscribes_current_set(fake, tmp_path):
 
 async def test_ws_silence_triggers_reconnect(fake, tmp_path):
     cfg = make_cfg(fake, tmp_path)
-    conn, frames = await _collect(cfg, fake, ["btcusdt@bookTicker"], silence_timeout_s=1.0)
+    # socket alive (pings answered) but no data beyond silence_max_s -> reconnect anyway
+    conn, frames = await _collect(cfg, fake, ["btcusdt@bookTicker"], silence_timeout_s=1.0, silence_max_s=2.0)
     conn.start()
     try:
         await asyncio.sleep(0.8)
-        fake.silence_until = time.time_ns() // 1_000_000 + 2500
-        await asyncio.sleep(4.5)
+        fake.silence_until = time.time_ns() // 1_000_000 + 3500
+        await asyncio.sleep(5.5)
         assert conn.stats.silence_reconnects >= 1
         assert conn.stats.connected and frames["btcusdt@bookTicker"] > 0
     finally:
@@ -188,3 +189,37 @@ async def test_recorder_stops_with_exit_9_on_writer_failure(fake, tmp_path, monk
     cfg = make_cfg(fake, tmp_path)
     code = await asyncio.wait_for(Recorder(cfg).run(duration_s=30), timeout=25)
     assert code == EXIT_WRITER_FAILED
+
+
+async def test_silent_but_alive_connection_is_not_reconnected(fake, tmp_path):
+    """Sparse streams (illiquid klines) can be quiet; a ping probe keeps a live socket."""
+    cfg = make_cfg(fake, tmp_path)
+    conn, frames = await _collect(cfg, fake, ["btcusdt@bookTicker"], silence_timeout_s=1.0, silence_max_s=30.0)
+    conn.start()
+    try:
+        await asyncio.sleep(0.8)
+        fake.silence_until = time.time_ns() // 1_000_000 + 3500      # data stops, socket stays alive
+        await asyncio.sleep(4.5)
+        assert conn.stats.silent_but_alive >= 1
+        assert conn.stats.silence_reconnects == 0 and conn.stats.connects == 1
+    finally:
+        await conn.stop()
+
+
+async def test_stale_feed_triggers_reconnect(fake, tmp_path):
+    cfg = make_cfg(fake, tmp_path)
+    conn, frames = await _collect(cfg, fake, ["btcusdt@bookTicker"], stale_lag_ms=1000.0, stale_min_interval_s=60.0)
+    orig = conn.on_frame
+
+    def late(raw, t_recv, c):                  # pretend every frame arrives 3 s after its event time
+        c.note_lag(3000.0)
+        orig(raw, t_recv, c)
+    conn.on_frame = late
+    conn.start()
+    try:
+        await asyncio.sleep(3.0)
+        assert conn.stats.stale_reconnects == 1                 # rate-limited to one per interval
+        assert conn.stats.connects == 2 and conn.stats.connected
+        assert conn.stats.last_disconnect_reason == "stale_feed"
+    finally:
+        await conn.stop()

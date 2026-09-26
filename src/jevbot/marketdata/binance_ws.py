@@ -46,6 +46,8 @@ class ConnStats:
     disconnects: int = 0
     rotations: int = 0
     silence_reconnects: int = 0
+    silent_but_alive: int = 0
+    stale_reconnects: int = 0
     control_sent: int = 0
     control_errors: int = 0
     connected: bool = False
@@ -76,6 +78,8 @@ class WsConnection:
         self._rotate_at_mono = 0
         self._rotate_due = False
         self._close_reason: str | None = None
+        self.lag_ewma_ms = 0.0
+        self._last_stale_mono = -10**12
 
     # -- desired stream set -------------------------------------------------
 
@@ -262,30 +266,65 @@ class WsConnection:
         except Exception:
             log.exception("ws_frame_handler_failed", conn=self.name)
 
-    async def _watchdog(self) -> None:
-        """Silence detection and rotation scheduling off the per-message hot path.
+    def note_lag(self, lag_ms: float) -> None:
+        """Feed-latency sample for this socket (consumer computes t_recv - t_event + clock offset)."""
+        self.lag_ewma_ms += 0.05 * (lag_ms - self.lag_ewma_ms)
 
-        Runs ~4x per silence period; closes the socket after ``silence_timeout_s`` without
-        frames and raises ``_rotate_due`` once the connection reaches ``conn_max_age_s``.
+    async def _close_for(self, reason: str, ws: ClientConnection) -> None:
+        self._close_reason = reason
+        await ws.close(code=1001, reason=reason)
+
+    async def _watchdog(self) -> None:
+        """Liveness and staleness checks off the per-frame hot path.
+
+        * silence: no frames for ``silence_timeout_s`` -> ping probe; a failed probe or
+          ``silence_max_s`` without frames closes the socket (sparse streams such as illiquid
+          klines are legitimately quiet, a dead TCP connection is not).
+        * stale feed: frames keep arriving but the socket's clock-corrected lag EWMA exceeds
+          ``stale_lag_ms`` -> reconnect (at most once per ``stale_min_interval_s``).
+        * rotation: raises ``_rotate_due`` at ``conn_max_age_s``.
         """
-        silence_ms = int(self.cfg.silence_timeout_s * 1000)
-        tick = max(0.05, min(1.0, self.cfg.silence_timeout_s / 4))
+        cfg = self.cfg
+        silence_ms = int(cfg.silence_timeout_s * 1000)
+        silence_max_ms = int(cfg.silence_max_s * 1000)
+        tick = max(0.05, min(1.0, cfg.silence_timeout_s / 4))
         last_msgs = self.stats.msgs
-        last_change = mono_ms()
+        last_data = mono_ms()
+        next_probe = 0
+        self.lag_ewma_ms = 0.0
         while True:
             await asyncio.sleep(tick)
             now = mono_ms()
-            if self.stats.msgs != last_msgs:
-                last_msgs, last_change = self.stats.msgs, now
+            flowing = self.stats.msgs != last_msgs
+            if flowing:
+                last_msgs, last_data = self.stats.msgs, now
                 self.stats.last_msg_mono = now
             if now >= self._rotate_at_mono:
                 self._rotate_due = True
             ws = self._ws
-            if ws is not None and now - last_change >= silence_ms and not self._close_reason:
-                self._close_reason = "silence"
+            if ws is None or self._close_reason:
+                continue
+            silent_for = now - last_data
+            if silent_for >= silence_max_ms:
                 self.stats.silence_reconnects += 1
-                log.warning("ws_silence", conn=self.name, silent_ms=now - last_change)
-                await ws.close(code=1001, reason="silence")
+                log.warning("ws_silence", conn=self.name, silent_ms=silent_for, probe="skipped_max")
+                await self._close_for("silence", ws)
+            elif silent_for >= silence_ms and now >= next_probe:
+                try:
+                    await asyncio.wait_for(await ws.ping(), timeout=min(5.0, cfg.ping_timeout_s))
+                    self.stats.silent_but_alive += 1
+                    next_probe = mono_ms() + silence_ms
+                    log.info("ws_silent_but_alive", conn=self.name, silent_ms=silent_for)
+                except Exception:
+                    self.stats.silence_reconnects += 1
+                    log.warning("ws_silence", conn=self.name, silent_ms=silent_for, probe="failed")
+                    await self._close_for("silence", ws)
+            elif (cfg.stale_lag_ms > 0 and flowing and self.lag_ewma_ms > cfg.stale_lag_ms
+                  and now - self._last_stale_mono >= cfg.stale_min_interval_s * 1000):
+                self._last_stale_mono = now
+                self.stats.stale_reconnects += 1
+                log.warning("ws_stale_feed", conn=self.name, lag_ewma_ms=round(self.lag_ewma_ms))
+                await self._close_for("stale_feed", ws)
 
     async def _pump(self, ws: ClientConnection) -> str:
         """Hot path: one ``await ws.recv()`` per frame, no per-frame timers or tasks."""

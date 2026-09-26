@@ -104,6 +104,25 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
         f = rep["feed_latency_ms_health"]
         rep["feed_latency_ms_offset_corrected"] = {k: (round(v + off_med, 2) if v is not None else None)
                                                    for k, v in f.items()}
+    # feed stalls: consecutive health intervals whose feed-latency p99 >= 2 s
+    episodes, cur = [], None
+    for h in steady:
+        bad = (h["lat_p99_ms"] or 0) >= 2000
+        if bad and cur is None:
+            cur = {"from": h["t"], "to": h["t"], "max_p99_ms": h["lat_p99_ms"]}
+        elif bad:
+            cur["to"], cur["max_p99_ms"] = h["t"], max(cur["max_p99_ms"], h["lat_p99_ms"])
+        elif cur is not None:
+            episodes.append(cur)
+            cur = None
+    if cur is not None:
+        episodes.append(cur)
+    for e in episodes:
+        e["duration_s"] = round((e["to"] - e["from"]) / 1000 + interval_s, 1)
+        e["from"], e["to"] = ms_to_iso(e["from"]), ms_to_iso(e["to"])
+    good_share = sum(1 for h in steady if (h["lat_p99_ms"] or 0) < 2000) / max(1, len(steady))
+    rep["feed_stalls"] = {"intervals_ok_share": round(good_share, 4), "episodes": episodes,
+                          "longest_s": max((e["duration_s"] for e in episodes), default=0.0)}
     lat = _read(raw, "latency_1m", since, until).to_pylist()
     by = defaultdict(list)
     for r in lat:
@@ -120,6 +139,8 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
                      "late_rows": health[-1]["late_rows_total"]}
     gaps = _read(raw, "gaps", since, until).to_pylist()
     rep["gaps"] = {"by_kind": dict(Counter(g["kind"] for g in gaps)),
+                   "disconnect_reasons": dict(Counter(g["detail"].split("reason=")[-1] for g in gaps
+                                                      if g["kind"] == "ws_disconnect" and "reason=" in g["detail"])),
                    "ws_disconnect_events": len({(g["t_start"], g["detail"]) for g in gaps if g["kind"] == "ws_disconnect"}),
                    "kline_gaps_backfilled": sum(1 for g in gaps if g["kind"].startswith("kline") and g["backfilled"]),
                    "kline_gaps_unfilled": sum(1 for g in gaps if g["kind"].startswith("kline") and not g["backfilled"]),
@@ -173,7 +194,10 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
         "no_unhealthy": rep["status_counts"].get("UNHEALTHY", 0) == 0,
         "kline_complete": rep["kline_completeness"]["cells_missing"] == 0,
         "clock_offset_under_500ms": (rep["clock"]["offset_ms_max_abs"] or 0) < 500,
-        "feed_lag_p99_under_2s": (rep["feed_latency_ms_health"]["max_p99"] or 0) < 2000,
+        # A single socket stalling on the network is detected and reconnected (stale_feed); the gate
+        # fails on sustained or frequent staleness: >= 99 % of intervals p99 < 2 s and no stall > 30 s.
+        "feed_lag_p99_under_2s_99pct": good_share >= 0.99,
+        "no_feed_stall_over_30s": rep["feed_stalls"]["longest_s"] <= 30,
         "loop_lag_p99_under_500ms": (rep["process"]["loop_lag_p99_ms"]["max"] or 0) < 500,
     }
     return rep
@@ -201,6 +225,9 @@ def to_markdown(rep: dict[str, Any]) -> str:
         ("feed latency offset-corrected p50 / max-p99 (ms)",
          f"{rep.get('feed_latency_ms_offset_corrected', {}).get('p50_of_p50')} / "
          f"{rep.get('feed_latency_ms_offset_corrected', {}).get('max_p99')}"),
+        ("feed stalls (p99 >= 2 s): ok-share / longest s / episodes",
+         f"{rep['feed_stalls']['intervals_ok_share']} / {rep['feed_stalls']['longest_s']} / "
+         f"{len(rep['feed_stalls']['episodes'])}"),
         ("schema errors", rep["errors"]["schema_errors"]),
         ("duplicates / invalid dropped", f"{rep['errors']['duplicates_dropped']} / {rep['errors']['invalid_dropped']}"),
         ("gaps", rep["gaps"]["by_kind"]),

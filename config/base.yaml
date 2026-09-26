@@ -33,7 +33,10 @@ binance:
     max_control_msgs_per_sec: 4     # SUBSCRIBE/UNSUBSCRIBE; Binance limit is 10 incoming msg/s
     subscribe_chunk: 50             # stream names per SUBSCRIBE message
     conn_max_age_s: 82800           # planned rotation at 23h (server drops at 24h)
-    silence_timeout_s: 15           # no message on a connection for this long -> reconnect
+    silence_timeout_s: 15           # no frames this long -> ping probe; reconnect only if the probe fails
+    silence_max_s: 120              # sparse streams (illiquid klines) may be silent; reconnect after this anyway
+    stale_lag_ms: 5000              # frames arriving this late on one socket (EWMA, clock-corrected) -> reconnect it
+    stale_min_interval_s: 60
     open_timeout_s: 10
     ping_interval_s: 30
     ping_timeout_s: 20

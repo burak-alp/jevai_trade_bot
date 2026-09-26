@@ -23,7 +23,7 @@ if ($smoke -ne 0) { Write-Host "SMOKE FAILED - stop here, report $out"; exit 3 }
 $log = "logs/record-$ts.jsonl"
 jevbot record --duration $Seconds --set "logging.file=$log" 2> "$out/record.stderr"; "exit=$LASTEXITCODE" | Set-Content "$out/record_exit.txt"
 jevbot verify *> "$out/verify.json"; "verify exit=$LASTEXITCODE" | Add-Content "$out/record_exit.txt"
-jevbot recording-report *> $null
+jevbot recording-report *> "$out/report.stdout"; "report exit=$LASTEXITCODE" | Add-Content "$out/record_exit.txt"
 Copy-Item run/recording_report.md, run/recording_report.json, run/smoke_report.json $out -ErrorAction SilentlyContinue
 Get-Content $log -Tail 200 | Set-Content "$out/record_tail.jsonl"
 Select-String -Path $log -Pattern '"level":"(WARNING|ERROR)"' | Select-Object -First 300 | ForEach-Object { $_.Line } | Set-Content "$out/warnings.jsonl"

@@ -172,7 +172,7 @@ class Harness:
                     f.kill()
         report = self.analyze(timeline, code, crashed)
         (wd / "loadtest_report.json").write_bytes(orjson.dumps(report, option=orjson.OPT_INDENT_2, default=str))
-        (wd / "loadtest_report.md").write_text(to_markdown(report))
+        (wd / "loadtest_report.md").write_text(to_markdown(report), encoding="utf-8")
         return report
 
     @staticmethod

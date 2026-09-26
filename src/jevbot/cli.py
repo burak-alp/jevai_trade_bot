@@ -100,7 +100,7 @@ def cmd_recording_report(args: argparse.Namespace) -> int:
     run.mkdir(parents=True, exist_ok=True)
     (run / "recording_report.json").write_bytes(orjson.dumps(rep, option=orjson.OPT_INDENT_2, default=str))
     md = to_markdown(rep)
-    (run / "recording_report.md").write_text(md)
+    (run / "recording_report.md").write_text(md, encoding="utf-8")
     sys.stdout.write(md)
     return 0 if "error" not in rep else 7
 
@@ -259,6 +259,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):     # Windows consoles default to cp1252
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

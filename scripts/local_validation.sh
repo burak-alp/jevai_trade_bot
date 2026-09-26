@@ -21,7 +21,7 @@ if [[ $SMOKE -ne 0 ]]; then echo "SMOKE FAILED — stop here, report $OUT"; exit
 LOG="logs/record-$TS.jsonl"
 jevbot record --duration "$DUR" --set logging.file="$LOG" 2> "$OUT/record.stderr"; echo "exit=$?" > "$OUT/record_exit.txt"
 jevbot verify > "$OUT/verify.json" 2>&1; echo "exit=$?" >> "$OUT/record_exit.txt"
-jevbot recording-report > /dev/null 2> "$OUT/report.stderr"
+jevbot recording-report > "$OUT/report.stdout" 2> "$OUT/report.stderr"; echo "report exit=$?" >> "$OUT/record_exit.txt"
 cp run/recording_report.md run/recording_report.json run/smoke_report.json "$OUT/" 2>/dev/null
 tail -n 200 "$LOG" > "$OUT/record_tail.jsonl"
 grep -E '"level":"(WARNING|ERROR)"' "$LOG" | head -n 300 > "$OUT/warnings.jsonl"

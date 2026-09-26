@@ -38,7 +38,10 @@ class WsConfig:
     max_control_msgs_per_sec: float = 4.0
     subscribe_chunk: int = 50
     conn_max_age_s: float = 82800.0
-    silence_timeout_s: float = 15.0
+    silence_timeout_s: float = 15.0      # no frames this long -> ping probe; reconnect only if the probe fails
+    silence_max_s: float = 120.0         # no frames this long -> reconnect even if pings succeed
+    stale_lag_ms: float = 5000.0         # per-connection EWMA of (t_recv - t_event + clock offset); 0 = off
+    stale_min_interval_s: float = 60.0   # at most one stale-feed reconnect per connection per interval
     open_timeout_s: float = 10.0
     ping_interval_s: float = 30.0
     ping_timeout_s: float = 20.0

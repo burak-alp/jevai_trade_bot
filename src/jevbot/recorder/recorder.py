@@ -76,10 +76,12 @@ class Recorder:
         self.smoke: SmokeReport | None = None
         self._stop = asyncio.Event()
         self._exit_code = EXIT_OK
+        self._offset_ms = 0.0
         self._tasks: list[asyncio.Task[Any]] = []
         self._backfilling: set[str] = set()
         self._backfill_sem = asyncio.Semaphore(4)
         self._conn_down_at: dict[str, int] = {}
+        self._conn_down_reason: dict[str, str] = {}
         self._err_log_budget: dict[str, int] = {}
 
     # -- public -------------------------------------------------------------
@@ -239,14 +241,16 @@ class Recorder:
     def _on_ws_state(self, conn: WsConnection, state: str, info: dict[str, Any]) -> None:
         if state == "disconnected":
             self._conn_down_at[conn.name] = info.get("t_down", now_ms())
+            self._conn_down_reason[conn.name] = info.get("reason", "")
         elif state == "connected" and not info.get("rotated"):
             t_down = self._conn_down_at.pop(conn.name, None)
             if t_down is not None:
                 t_up = now_ms()
+                reason = self._conn_down_reason.pop(conn.name, "")
                 rows = []
                 for s in conn.streams:
                     rows.append((ep.symbol_of(s) or "*", s, "ws_disconnect", t_down, t_up, t_up, False, 0,
-                                 f"conn={conn.name}"))
+                                 f"conn={conn.name} reason={reason}"))
                 self.sink.extend("gaps", rows)
                 self.counters.gaps_detected += 1
                 log.warning("ws_gap_recorded", conn=conn.name, down_ms=t_up - t_down, streams=len(rows))
@@ -285,38 +289,40 @@ class Recorder:
         elif fam == "depth":
             self._on_depth(ev, conn)
         elif fam == "forceOrder":
-            self._lat(fam, conn.route, ev.t_event, t_recv)
+            self._lat(fam, conn, ev.t_event, t_recv)
             self.sink.append("force_order", _force_row(ev))
 
-    def _lat(self, fam: str, route: str, t_event: int, t_recv: int) -> None:
-        self.lat_interval.add(t_recv - t_event)
-        rows = self.latency.add(fam, route, t_event, t_recv)
+    def _lat(self, fam: str, conn: WsConnection, t_event: int, t_recv: int) -> None:
+        lag = t_recv - t_event
+        self.lat_interval.add(lag)
+        conn.note_lag(lag + self._offset_ms)
+        rows = self.latency.add(fam, conn.route, t_event, t_recv)
         if rows:
             self.sink.extend("latency_1m", rows)
 
     def _on_book(self, e: BookTicker, conn: WsConnection) -> None:
-        self._lat("bookTicker", conn.route, e.t_event, e.t_recv)
+        self._lat("bookTicker", conn, e.t_event, e.t_recv)
         self.book_last_recv[e.symbol] = e.t_recv
         row = self.book.update(e)
         if row is not None:
             self.sink.append("book_1s", row)
 
     def _on_depth(self, e: DepthSnapshot, conn: WsConnection) -> None:
-        self._lat("depth", conn.route, e.t_event, e.t_recv)
+        self._lat("depth", conn, e.t_event, e.t_recv)
         row = self.depth.update(e)
         if row is not None:
             self.sink.append("depth20", row)
 
     def _on_mark(self, items: list[MarkPrice], conn: WsConnection) -> None:
         if items:
-            self._lat("markPrice", conn.route, items[0].t_event, items[0].t_recv)
+            self._lat("markPrice", conn, items[0].t_event, items[0].t_recv)
         for m in items:
             if m.symbol in self.member_set and self.mark.accept(m):
                 self.sink.append("mark_price", (m.symbol, m.t_event, m.mark, m.index, m.est_settle,
                                                 m.funding_rate, m.next_funding_time, m.t_recv))
 
     def _on_kline(self, k: Kline, conn: WsConnection) -> None:
-        self._lat("kline", conn.route, k.t_event, k.t_recv)
+        self._lat("kline", conn, k.t_event, k.t_recv)
         if not k.closed:
             return
         accept, gap = self.klines.on_kline(k.symbol, k.open_time)
@@ -385,6 +391,7 @@ class Recorder:
     async def _sync_time(self) -> None:
         t_send, t_server, t_recv = await self.rest.server_time()
         self.clock.add_sample(t_send, t_server, t_recv)
+        self._offset_ms = float(self.clock.offset_ms or 0.0)
         off = self.clock.offset_ms
         if off is not None and abs(off) > 250:
             log.warning("clock_offset_high", offset_ms=round(off, 1), rtt_ms=self.clock.last_rtt_ms)
@@ -493,6 +500,9 @@ class Recorder:
                                       "connected": c.stats.connected, "msgs": c.stats.msgs,
                                       "connects": c.stats.connects, "rotations": c.stats.rotations,
                                       "silence_reconnects": c.stats.silence_reconnects,
+                                      "silent_but_alive": c.stats.silent_but_alive,
+                                      "stale_reconnects": c.stats.stale_reconnects,
+                                      "lag_ewma_ms": round(c.lag_ewma_ms, 1),
                                       "last_disconnect_reason": c.stats.last_disconnect_reason}
                                      for c in self.pool.connections()],
                      "smoke_ok": self.health.smoke_ok}
