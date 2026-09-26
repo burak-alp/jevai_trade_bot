@@ -1,0 +1,102 @@
+# jevbot base configuration.
+# Overlay with additional files: `jevbot --config config/base.yaml --config config/local.yaml ...`
+# or single values: `--set recorder.depth.top_n_by_volume=10`.
+# Unknown keys are rejected (typo protection).
+
+data_dir: ./data
+run_dir: ./run
+
+logging:
+  level: INFO
+  json: true
+  file: null            # e.g. ./logs/recorder.jsonl ; null = stderr only
+
+binance:
+  rest_base: https://fapi.binance.com
+  ws:
+    base: wss://fstream.binance.com
+    # 2026 route split; legacy un-routed URLs were decommissioned on 2026-04-23.
+    routes:
+      public: /public
+      market: /market
+      private: /private
+    # Which route each stream family belongs to. A stream on the wrong route
+    # silently receives nothing -> the startup smoke test catches it.
+    stream_routes:
+      bookTicker: public
+      depth: public
+      kline: market
+      markPrice: market
+      forceOrder: market
+      aggTrade: market
+    max_streams_per_conn: 100       # Binance allows more; stay conservative
+    max_control_msgs_per_sec: 4     # SUBSCRIBE/UNSUBSCRIBE; Binance limit is 10 incoming msg/s
+    subscribe_chunk: 50             # stream names per SUBSCRIBE message
+    conn_max_age_s: 82800           # planned rotation at 23h (server drops at 24h)
+    silence_timeout_s: 15           # no message on a connection for this long -> reconnect
+    open_timeout_s: 10
+    ping_interval_s: 30
+    ping_timeout_s: 20
+    max_message_bytes: 8388608
+    compression: false
+    backoff_initial_s: 1.0
+    backoff_max_s: 60.0
+    backoff_jitter: 0.3
+  rest:
+    timeout_s: 10.0
+    max_retries: 3
+    weight_limit_per_min: 2400      # replaced at runtime by exchangeInfo.rateLimits
+    weight_budget_frac: 0.5         # pollers slow down above this fraction of the limit
+
+universe:
+  quote_asset: USDT
+  contract_type: PERPETUAL
+  min_quote_vol_24h: 20000000
+  max_symbols: 200
+  exit_rank: 230                    # hysteresis: a member leaves only when rank > exit_rank
+  min_listing_age_days: 14
+  exclude: [USDCUSDT, FDUSDUSDT, BUSDUSDT, TUSDUSDT, USDPUSDT]
+  refresh_s: 3600
+
+recorder:
+  kline_1m: true
+  mark_price: true
+  book_ticker: true
+  force_order: true
+  depth:
+    enabled: true
+    symbols_always: [BTCUSDT, ETHUSDT]
+    top_n_by_volume: 20             # static per universe refresh; dynamic Tier-2 comes later
+    levels: 20
+    speed: 500ms
+    sample_interval_s: 5
+  oi:
+    enabled: true
+    cycle_s: 60                     # every universe symbol polled once per cycle
+  time_sync_s: 60
+  kline_grace_s: 5                  # closed 1m kline expected by close_time + grace
+  kline_backfill_after_s: 20        # missing -> REST backfill after this delay
+  exchange_info_snapshot_s: 3600
+  health_interval_s: 10
+  health_log_interval_s: 60
+  latency_agg_s: 60
+  orphan_tmp_quarantine: true
+  smoke:
+    enabled: true
+    first_event_timeout_s: 20
+    required: true                  # recorder exits if a route fails the smoke test at startup
+
+sink:
+  rotate_s: 600                     # Parquet file rotation (a crash loses at most one open file)
+  flush_s: 5                        # buffered rows -> writer thread
+  flush_rows: 50000
+  compression: zstd
+  compression_level: 3
+
+hist:
+  base_url: https://data.binance.vision
+  listing_url: https://s3-ap-northeast-1.amazonaws.com/data.binance.vision
+  concurrency: 8
+  max_retries: 4
+  timeout_s: 60.0
+  keep_zip: false
