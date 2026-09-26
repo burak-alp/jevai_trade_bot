@@ -173,3 +173,29 @@ async def test_suspect_file_quarantined_and_excluded_from_catalog(tmp_path):
     assert [p.name for p in default] == ["GOODUSDT-klines-1m-2024-01-01.parquet"]
     assert len(list_files(root, include_suspect=True)) == 2
     assert pq.read_metadata(default[0]).num_rows == 1440
+
+
+async def test_metrics_unsorted_source_is_sorted_not_suspect(tmp_path):
+    hdr = ("create_time,symbol,sum_open_interest,sum_open_interest_value,count_toptrader_long_short_ratio,"
+           "sum_toptrader_long_short_ratio,count_long_short_ratio,sum_taker_long_short_vol_ratio\n")
+    from datetime import datetime, timedelta, timezone
+    day = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    rows = [f"{(day + timedelta(minutes=5 * i)).strftime('%Y-%m-%d %H:%M:%S')},BTCUSDT,1,2,1,1,1,1\n" for i in range(288)]
+    rows[10], rows[11] = rows[11], rows[10]                    # real files: some rows out of order
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("m.csv", hdr + "".join(rows))
+    z = buf.getvalue()
+
+    def handler(req):
+        if req.url.path.endswith(".CHECKSUM"):
+            return httpx.Response(200, text=hashlib.sha256(z).hexdigest())
+        return httpx.Response(200, content=z)
+    bv = BinanceVision(HistConfig(base_url="https://vision.test"), tmp_path, transport=httpx.MockTransport(handler))
+    st = await bv.download("metrics", ["BTCUSDT"], date(2024, 1, 1), date(2024, 1, 1))
+    await bv.aclose()
+    assert st.ok == 1 and st.suspect == 0
+    e = next(iter(read_manifest(tmp_path / "metrics").values()))
+    assert e["quality"] == "ok"
+    t = pq.read_table(tmp_path / "metrics" / e["file"]).column("create_time").to_pylist()
+    assert t == sorted(t) and len(t) == 288

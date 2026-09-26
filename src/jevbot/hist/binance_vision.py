@@ -57,6 +57,7 @@ class DatasetSpec:
     monthly: bool = True
     datetime_columns: tuple[str, ...] = ()       # "YYYY-mm-dd HH:MM:SS" strings -> ms
     drop: tuple[str, ...] = ("ignore",)
+    sort_by: tuple[str, ...] = ()                # small datasets whose source row order is not guaranteed
 
 
 DATASETS: dict[str, DatasetSpec] = {
@@ -72,12 +73,14 @@ DATASETS: dict[str, DatasetSpec] = {
                                        ("sum_open_interest", f64), ("sum_open_interest_value", f64),
                                        ("count_toptrader_long_short_ratio", f64),
                                        ("sum_toptrader_long_short_ratio", f64), ("count_long_short_ratio", f64),
-                                       ("sum_taker_long_short_vol_ratio", f64)], (), monthly=False,
+                                       ("sum_taker_long_short_vol_ratio", f64)], (), monthly=False, sort_by=("create_time",),
                            datetime_columns=("create_time",)),
     "fundingRate": DatasetSpec("fundingRate", [("calc_time", i64), ("funding_interval_hours", i64),
-                                               ("last_funding_rate", f64)], ("calc_time",), daily=False),
+                                               ("last_funding_rate", f64)], ("calc_time",), daily=False,
+                           sort_by=("calc_time",)),
     "bookDepth": DatasetSpec("bookDepth", [("timestamp", pa.string()), ("percentage", f64), ("depth", f64),
-                                           ("notional", f64)], (), monthly=False, datetime_columns=("timestamp",)),
+                                           ("notional", f64)], (), monthly=False, datetime_columns=("timestamp",),
+                           sort_by=("timestamp", "percentage")),
 }
 
 
@@ -197,6 +200,17 @@ def convert_csv_stream(spec: DatasetSpec, open_fn: Any, out_tmp: Path, metadata:
         if writer is not None:
             writer.close()
     return res
+
+
+def sort_small_file(path: Path, keys: tuple[str, ...]) -> int:
+    """Sort a small Parquet file in place by ``keys``; returns the number of source-order inversions."""
+    t = pq.read_table(path)
+    k = t.column(keys[0]).to_pylist()
+    inversions = sum(1 for a, b in zip(k, k[1:]) if b < a)
+    if inversions or len(keys) > 1:
+        t = t.sort_by([(c, "ascending") for c in keys])
+        pq.write_table(t, path, compression="zstd", compression_level=3)
+    return inversions
 
 
 def parse_csv(spec: DatasetSpec, raw_csv: bytes) -> pa.Table:
@@ -370,7 +384,11 @@ class BinanceVision:
             tmp = out.with_name(out.name + ".tmp")
             meta = {"source_url": url, "source_sha256": src_sha, "symbol": job.symbol, "period": job.period}
             res = convert_csv_stream(spec, lambda: zf.open(names[0]), tmp, meta)
+        inversions = sort_small_file(tmp, spec.sort_by) if spec.sort_by else 0
         quality = self.validate(spec, tmp, job)
+        if spec.sort_by:
+            # source row order is informational only: the file is stored sorted and validated after sorting
+            quality["checks"]["source_row_inversions"] = inversions
         final = out
         if quality["status"] == "suspect":
             stats.suspect += 1

@@ -121,12 +121,43 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
         e["duration_s"] = round((e["to"] - e["from"]) / 1000 + interval_s, 1)
         e["from"], e["to"] = ms_to_iso(e["from"]), ms_to_iso(e["to"])
     good_share = sum(1 for h in steady if (h["lat_p99_ms"] or 0) < 2000) / max(1, len(steady))
+    # diagnostics: is a stall the recorder, the clock, or the network/bandwidth?
+    stall = [h for h in steady if (h["lat_p99_ms"] or 0) >= 2000]
+    calm = [h for h in steady if (h["lat_p99_ms"] or 0) < 2000]
+
+    def med(rows: list[dict[str, Any]], k: str) -> float | None:
+        return _q([r[k] for r in rows], 0.5)
+
+    def pearson(xs: list[float], ys: list[float]) -> float | None:
+        pts = [(x, y) for x, y in zip(xs, ys) if x == x and y == y]
+        if len(pts) < 3:
+            return None
+        mx, my = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+        sxy = sum((x - mx) * (y - my) for x, y in pts)
+        sxx, syy = sum((x - mx) ** 2 for x, _ in pts), sum((y - my) ** 2 for _, y in pts)
+        return round(sxy / (sxx * syy) ** 0.5, 3) if sxx and syy else None
+    corrected_ok = sum(1 for h in steady if (h["lat_p99_ms"] or 0) + (h["clock_offset_ms"]
+                       if h["clock_offset_ms"] == h["clock_offset_ms"] else 0) < 2000) / max(1, len(steady))
+    rep["stall_diagnostics"] = {
+        "intervals_stall_vs_calm": [len(stall), len(calm)],
+        "median_bytes_per_s_stall_vs_calm": [med(stall, "bytes_per_s"), med(calm, "bytes_per_s")],
+        "median_msgs_per_s_stall_vs_calm": [med(stall, "msgs_per_s"), med(calm, "msgs_per_s")],
+        "median_cpu_stall_vs_calm": [med(stall, "cpu_pct"), med(calm, "cpu_pct")],
+        "max_loop_lag_p99_in_stalls": _q([h["loop_lag_p99_ms"] for h in stall], 1.0),
+        "corr_lat_p99_vs_bytes_per_s": pearson([h["bytes_per_s"] for h in steady], [h["lat_p99_ms"] for h in steady]),
+        "corr_lat_p99_vs_msgs_per_s": pearson([h["msgs_per_s"] for h in steady], [h["lat_p99_ms"] for h in steady]),
+        "intervals_ok_share_clock_corrected": round(corrected_ok, 4),
+        "reading": "loop lag ~0 in stalls => not the recorder; high corr with bytes/s => bandwidth/queueing; "
+                   "all streams stalling together => network path",
+    }
     rep["feed_stalls"] = {"intervals_ok_share": round(good_share, 4), "episodes": episodes,
                           "longest_s": max((e["duration_s"] for e in episodes), default=0.0)}
     lat = _read(raw, "latency_1m", since, until).to_pylist()
     by = defaultdict(list)
     for r in lat:
         by[f"{r['family']}/{r['route']}"].append(r)
+    rep["stall_minutes_by_stream"] = {k: sum(1 for r in rows if (r["lag_p99_ms"] or 0) >= 2000)
+                                      for k, rows in sorted(by.items())}
     rep["feed_latency_ms_by_stream"] = {k: {"messages": sum(r["n"] for r in rows),
                                             "p50_median": _q([r["lag_p50_ms"] for r in rows], 0.5),
                                             "p95_median": _q([r["lag_p95_ms"] for r in rows], 0.5),
