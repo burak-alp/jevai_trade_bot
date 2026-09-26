@@ -1,0 +1,13 @@
+{
+  "files_ok": 172,
+  "rows_ok": 930011,
+  "bytes_ok": 42950857,
+  "checksum_mismatch": [],
+  "unreadable": [],
+  "missing_sidecar": [],
+  "row_count_mismatch": [],
+  "orphans_tmp": [],
+  "manifest_missing_file": [],
+  "not_in_manifest": [],
+  "ok": true
+}

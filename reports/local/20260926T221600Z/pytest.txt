@@ -1,0 +1,22 @@
+............................F........................................... [ 98%]
+.                                                                        [100%]
+================================== FAILURES ===================================
+_________________ test_book_ticker_max_symbols_limits_streams _________________
+
+tmp_path = WindowsPath('C:/Users/Burak Alp/AppData/Local/Temp/pytest-of-Burak Alp/pytest-89/test_book_ticker_max_symbols_l0')
+
+    def test_book_ticker_max_symbols_limits_streams(tmp_path):
+        from jevbot.recorder.recorder import Recorder
+        cfg = load_config(["config/base.yaml", "config/home.yaml"], [f"data_dir={tmp_path}", f"run_dir={tmp_path}"])
+        rec = Recorder(cfg)
+        rec.members = [f"S{i}USDT" for i in range(150)]
+        streams = rec._desired_streams()
+>       assert sum(s.endswith("@bookTicker") for s in streams) == 100
+E       assert 50 == 100
+E        +  where 50 = sum(<generator object test_book_ticker_max_symbols_limits_streams.<locals>.<genexpr> at 0x000001BBD87C4200>)
+
+tests\unit\test_endpoints_universe.py:63: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/unit/test_endpoints_universe.py::test_book_ticker_max_symbols_limits_streams
+1 failed, 72 passed in 75.63s (0:01:15)
+exit=1

@@ -1,0 +1,108 @@
+{
+  "t": 1790461061965,
+  "ok": true,
+  "checks": [
+    {
+      "name": "rest",
+      "ok": true,
+      "detail": {
+        "rtt_ms": 281,
+        "clock_offset_ms": 4.5,
+        "rate_limits": [
+          {
+            "rateLimitType": "REQUEST_WEIGHT",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 2400
+          },
+          {
+            "rateLimitType": "ORDERS",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 1200
+          },
+          {
+            "rateLimitType": "ORDERS",
+            "interval": "SECOND",
+            "intervalNum": 10,
+            "limit": 300
+          }
+        ],
+        "symbols": 907,
+        "weight_used_1m": 58
+      }
+    },
+    {
+      "name": "ws:market",
+      "ok": true,
+      "detail": {
+        "url": "wss://fstream.binance.com/market/stream?streams=btcusdt@kline_1m/!markPrice@arr@1s/!forceOrder@arr",
+        "subscribe": [
+          "ethusdt@kline_1m"
+        ],
+        "required": [
+          "kline",
+          "markPrice"
+        ],
+        "connect_ms": 1203,
+        "extensions": [
+          "PerMessageDeflate"
+        ],
+        "subscribe_ack": "ok",
+        "ping_rtt_ms": 360.0,
+        "stage": "done",
+        "events": {
+          "markPrice": 3,
+          "kline": 5
+        },
+        "validated": {
+          "markPrice": 3,
+          "kline": 5
+        },
+        "schema_errors": [],
+        "subscribe_ack_ok": true,
+        "subscribed_streams_delivered": [
+          "ethusdt@kline_1m"
+        ],
+        "elapsed_ms": 8985,
+        "missing_required": []
+      }
+    },
+    {
+      "name": "ws:public",
+      "ok": true,
+      "detail": {
+        "url": "wss://fstream.binance.com/public/stream?streams=btcusdt@bookTicker/btcusdt@depth20@500ms",
+        "subscribe": [
+          "ethusdt@bookTicker"
+        ],
+        "required": [
+          "bookTicker",
+          "depth"
+        ],
+        "connect_ms": 1250,
+        "extensions": [
+          "PerMessageDeflate"
+        ],
+        "subscribe_ack": "ok",
+        "ping_rtt_ms": 297.0,
+        "stage": "done",
+        "events": {
+          "bookTicker": 315,
+          "depth": 1
+        },
+        "validated": {
+          "bookTicker": 315,
+          "depth": 1
+        },
+        "schema_errors": [],
+        "subscribe_ack_ok": true,
+        "subscribed_streams_delivered": [
+          "ethusdt@bookTicker"
+        ],
+        "elapsed_ms": 12188,
+        "missing_required": []
+      }
+    }
+  ]
+}

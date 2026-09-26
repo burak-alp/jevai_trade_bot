@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ import orjson
 import pyarrow.parquet as pq
 
 TMP_SUFFIX = ".tmp"
+_MANIFEST_APPEND_LOCK = threading.Lock()
 
 
 def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
@@ -74,10 +76,13 @@ def fsync_path(path: Path) -> None:
 
 
 def append_manifest(dataset_dir: Path, entry: dict[str, Any]) -> None:
-    with open(dataset_dir / "_manifest.jsonl", "ab") as fh:
-        fh.write(orjson.dumps(entry) + b"\n")
-        fh.flush()
-        os.fsync(fh.fileno())
+    # Historical conversion publishes jobs from worker threads. On Windows,
+    # concurrent append-mode handles can overwrite each other's lines.
+    with _MANIFEST_APPEND_LOCK:
+        with open(dataset_dir / "_manifest.jsonl", "ab") as fh:
+            fh.write(orjson.dumps(entry) + b"\n")
+            fh.flush()
+            os.fsync(fh.fileno())
 
 
 def read_manifest(dataset_dir: Path) -> dict[str, dict[str, Any]]:
