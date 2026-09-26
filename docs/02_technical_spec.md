@@ -123,14 +123,16 @@ Neden recorder ayrı: trader'daki bir bug veya restart veri kaybına yol açmama
 
 | Route | Base | İçerik | Bu projede |
 |---|---|---|---|
-| `/public` | `wss://fstream.binance.com/public` | yüksek frekanslı order book verisi | `@bookTicker`, `@depth20@500ms` |
-| `/market` | `wss://fstream.binance.com/market` | normal market verisi | `@kline_1m`, `!markPrice@arr@1s`, `!forceOrder@arr` (ve ileride `@aggTrade`) |
+| `/public` | `wss://fstream.binance.com/public` | yüksek frekanslı order book verisi: `<symbol>@bookTicker`, `!bookTicker`, `<symbol>@depth<levels>[@speed]`, `<symbol>@depth[@speed]` | `@bookTicker`, `@depth20@500ms` |
+| `/market` | `wss://fstream.binance.com/market` | normal market verisi: `<symbol>@aggTrade`, markPrice stream'leri ve `!markPrice@arr`, kline, `<symbol>@forceOrder` / `!forceOrder@arr` | `@kline_1m`, `!markPrice@arr@1s`, `!forceOrder@arr` (ileride `@aggTrade`) |
 | `/private` | `wss://fstream.binance.com/private` | user data (`/private/ws?listenKey=...&events=...`) | Sprint 0'da **yok** |
+
+Route eşlemesi resmi dokümana göre **VERIFIED** (2026-09-26); `config/base.yaml → binance.ws.stream_routes` ile uyumlu. Payload/şema ve gerçek davranış yine de live smoke testte doğrulanır.
 
 Kurallar:
 - Base URL, route path'leri ve **stream → route eşlemesi source'a gömülmez**; `config/base.yaml → binance.ws` altından gelir. Yanlış route'a subscribe edilen stream veri göndermez (sessiz hata) → aşağıdaki smoke test bu yüzden zorunlu.
 - **Startup integration smoke test** (her route için): bağlantı → subscribe (ack) → ilk event (timeout içinde) → event schema validation → heartbeat (ping/pong RTT). Hepsi geçmeden recorder/trader `HEALTHY` sayılmaz; başarısız route `UNHEALTHY` olarak raporlanır ve periyodik yeniden denenir.
-- Connection limitleri (stream/connection, 10 incoming msg/s, 24 h ömür) config'tedir; varsayılanlar muhafazakâr seçilir (ör. ≤ 100 stream/connection).
+- Resmi connection limitleri — **VERIFIED**: bağlantı ömrü **24 saat** (sonra sunucu kapatır); bağlantı başına **10 incoming control message/s** (SUBSCRIBE/UNSUBSCRIBE/ping vb., aşılırsa bağlantı kesilir); bağlantı başına en fazla **1024 stream**. Config varsayılanları bunların altında kalır: `conn_max_age_s=82800` (23 h planlı rotation), `max_control_msgs_per_sec=4`, `max_streams_per_conn=100`.
 
 | Stream | Kapsam | Kullanım | Tahmini yük |
 |---|---|---|---|
@@ -174,7 +176,7 @@ class StreamHealth:
 
 - Kline: `close_time + 3000 ms` içinde final bar yoksa → sembol o tick STALE; `10 s` → REST backfill.
 - Silent stall: connection açık ama o connection'daki *tüm* stream'ler > 10 s sessiz → forced reconnect.
-- Her connection 23 h'de planlı yeniden bağlanır (Binance 24 h limiti `[VERIFY]`), iki connection aynı anda değil (overlap: yeni bağlan → eskiyi kapat).
+- Her connection 23 h'de planlı yeniden bağlanır (Binance 24 h limiti — VERIFIED); make-before-break: yeni bağlan → ilk frame → eskiyi (≤ 500 ms drain) kapat.
 - Reconnect sonrası: kline backfill, gap `[t_last, t_now]` `data_gaps` tablosuna, etkilenen sembol warmup kontrolünden tekrar geçer.
 
 ### 3.4 Universe (point-in-time)
