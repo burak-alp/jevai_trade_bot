@@ -53,7 +53,6 @@ class ConnStats:
     last_msg_mono: int = 0
     last_disconnect_ms: int | None = None
     last_disconnect_reason: str | None = None
-    first_msg_after_connect: bool = False
     disconnect_log: list[tuple[int, int | None, str]] = field(default_factory=list)   # (t_down, t_up, reason)
 
 
@@ -74,6 +73,9 @@ class WsConnection:
         self._last_ctl_mono = 0
         self._next_id = 1
         self._pending: dict[int, tuple[str, list[str]]] = {}
+        self._rotate_at_mono = 0
+        self._rotate_due = False
+        self._close_reason: str | None = None
 
     # -- desired stream set -------------------------------------------------
 
@@ -245,7 +247,6 @@ class WsConnection:
         st.connects += 1
         st.connected_since_ms = now_ms()
         st.last_msg_mono = mono_ms()
-        st.first_msg_after_connect = False
         if st.disconnect_log and st.disconnect_log[-1][1] is None:
             t_down, _, r = st.disconnect_log[-1]
             st.disconnect_log[-1] = (t_down, st.connected_since_ms, r)
@@ -256,44 +257,65 @@ class WsConnection:
         st = self.stats
         st.msgs += 1
         st.bytes += len(raw)
-        st.last_msg_mono = mono_ms()
-        st.first_msg_after_connect = True
         try:
             self.on_frame(raw, now_ms(), self)
         except Exception:
             log.exception("ws_frame_handler_failed", conn=self.name)
 
-    async def _pump(self, ws: ClientConnection) -> str:
-        self._mark_connected(ws)
-        opened_mono = mono_ms()
-        max_age_ms = int(self.cfg.conn_max_age_s * 1000)
+    async def _watchdog(self) -> None:
+        """Silence detection and rotation scheduling off the per-message hot path.
+
+        Runs ~4x per silence period; closes the socket after ``silence_timeout_s`` without
+        frames and raises ``_rotate_due`` once the connection reaches ``conn_max_age_s``.
+        """
         silence_ms = int(self.cfg.silence_timeout_s * 1000)
+        tick = max(0.05, min(1.0, self.cfg.silence_timeout_s / 4))
+        last_msgs = self.stats.msgs
+        last_change = mono_ms()
         while True:
-            if self._stopping:
-                await ws.close()
-                return "stopped"
+            await asyncio.sleep(tick)
             now = mono_ms()
-            if now - opened_mono >= max_age_ms:
-                new_ws = await self._rotate(ws)
-                if new_ws is not None:
-                    ws = new_ws
-                    opened_mono = mono_ms()
-                else:
-                    opened_mono += 60_000          # retry rotation in a minute
-                continue
-            timeout = min(silence_ms, max(1, max_age_ms - (now - opened_mono))) / 1000
-            try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
-            except asyncio.TimeoutError:
-                if mono_ms() - self.stats.last_msg_mono >= silence_ms:
-                    self.stats.silence_reconnects += 1
-                    log.warning("ws_silence", conn=self.name, silent_ms=mono_ms() - self.stats.last_msg_mono)
-                    await ws.close(code=1001, reason="silence")
-                    return "silence"
-                continue
-            except ConnectionClosed as e:
-                return f"closed:{e.rcvd.code if e.rcvd else 'nocode'}"
-            self._deliver(raw)
+            if self.stats.msgs != last_msgs:
+                last_msgs, last_change = self.stats.msgs, now
+                self.stats.last_msg_mono = now
+            if now >= self._rotate_at_mono:
+                self._rotate_due = True
+            ws = self._ws
+            if ws is not None and now - last_change >= silence_ms and not self._close_reason:
+                self._close_reason = "silence"
+                self.stats.silence_reconnects += 1
+                log.warning("ws_silence", conn=self.name, silent_ms=now - last_change)
+                await ws.close(code=1001, reason="silence")
+
+    async def _pump(self, ws: ClientConnection) -> str:
+        """Hot path: one ``await ws.recv()`` per frame, no per-frame timers or tasks."""
+        self._mark_connected(ws)
+        max_age_ms = int(self.cfg.conn_max_age_s * 1000)
+        self._rotate_at_mono = mono_ms() + max_age_ms
+        self._rotate_due = False
+        self._close_reason = None
+        watchdog = asyncio.create_task(self._watchdog(), name=f"ws-watchdog:{self.name}")
+        try:
+            while True:
+                try:
+                    raw = await ws.recv()
+                except ConnectionClosed as e:
+                    if self._stopping:
+                        return "stopped"
+                    if self._close_reason:
+                        return self._close_reason
+                    return f"closed:{e.rcvd.code if e.rcvd else 'nocode'}"
+                self._deliver(raw)
+                if self._rotate_due:
+                    self._rotate_due = False
+                    new_ws = await self._rotate(ws)
+                    if new_ws is not None:
+                        ws = new_ws
+                        self._rotate_at_mono = mono_ms() + max_age_ms
+                    else:
+                        self._rotate_at_mono = mono_ms() + 60_000     # retry rotation in a minute
+        finally:
+            watchdog.cancel()
 
     async def _rotate(self, old: ClientConnection) -> ClientConnection | None:
         """Make-before-break: open a new socket, wait for its first frame, drain the old one."""
