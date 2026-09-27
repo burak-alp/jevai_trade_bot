@@ -126,3 +126,44 @@ def test_chunked_conversion_matches_whole_file(monkeypatch):
     assert chunked.num_rows == 997 and chunked.equals(whole)
     no_trailing_newline = parse_csv(DATASETS["klines"], (KL_HDR + rows.rstrip("\n")).encode())
     assert no_trailing_newline.equals(whole)
+
+
+async def test_transient_windows_file_locks_do_not_stop_download(tmp_path, monkeypatch):
+    """AV/indexer locks: os.replace retried; a temp file that stays locked never crashes the run."""
+    import os
+    from pathlib import Path
+
+    import jevbot.hist.binance_vision as mod
+
+    good = zipped("BTCUSDT-1m-2024-01-01.csv", KL_HDR + KL_ROW)
+
+    def handler(req):
+        p = req.url.path
+        if p.endswith(".zip"):
+            return httpx.Response(200, content=good)
+        if p.endswith(".zip.CHECKSUM"):
+            return httpx.Response(200, text=f"{hashlib.sha256(good).hexdigest()}  x.zip\n")
+        return httpx.Response(404)
+
+    fails = {"replace": 2}
+    real_replace, real_unlink = os.replace, Path.unlink
+
+    def flaky_replace(a, b):
+        if fails["replace"] > 0:
+            fails["replace"] -= 1
+            raise PermissionError(32, "being used by another process")
+        return real_replace(a, b)
+
+    def locked_unlink(self, *a, **k):
+        if self.name.endswith(".part"):
+            raise PermissionError(32, "being used by another process")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(mod.os, "replace", flaky_replace)
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+    bv = BinanceVision(HistConfig(base_url="https://vision.test", concurrency=1), tmp_path,
+                       transport=httpx.MockTransport(handler))
+    st = await bv.download("klines", ["BTCUSDT", "ETHUSDT"], date(2024, 1, 1), date(2024, 1, 1), interval="1m")
+    await bv.aclose()
+    assert (st.ok, st.failed) == (2, 0) and fails["replace"] == 0

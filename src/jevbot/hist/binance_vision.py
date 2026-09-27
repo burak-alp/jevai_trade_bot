@@ -16,6 +16,7 @@ import hashlib
 import io
 import os
 import random
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass, field
@@ -37,6 +38,18 @@ from jevbot.hist.validate import Context, validate_file
 from jevbot.recorder.integrity import append_manifest, sha256_file, write_sidecar
 
 log = get_logger(__name__)
+
+
+def retry_fs(fn, *args: Any, attempts: int = 6, delay_s: float = 0.2) -> Any:
+    """Retry a filesystem call on PermissionError: on Windows antivirus/indexers briefly lock
+    freshly written files, which must not fail (or crash) a long download."""
+    for i in range(attempts):
+        try:
+            return fn(*args)
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(delay_s * 2 ** i)
 
 PREFIX = "data/futures/um"
 S3_NS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
@@ -365,14 +378,17 @@ class BinanceVision:
             if self.cfg.keep_zip:
                 zp = self.out_root / "_zips" / key
                 zp.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(zip_tmp, zp)
+                retry_fs(os.replace, zip_tmp, zp)
         except Exception as e:
             stats.failed += 1
             stats.failures.append(f"{key}: {e!r}")
             log.error("hist_job_failed", key=key, err=repr(e))
         finally:
-            if zip_tmp.exists():
-                zip_tmp.unlink()
+            try:                                     # best effort: a locked temp file never stops the run
+                if zip_tmp.exists():
+                    await asyncio.to_thread(retry_fs, zip_tmp.unlink)
+            except OSError as e:
+                log.warning("hist_tmp_cleanup_failed", path=str(zip_tmp), err=repr(e))
 
     def _convert_and_publish(self, spec: DatasetSpec, zip_path: Path, out: Path, root: Path, key: str, url: str,
                              src_sha: str, job: Job, stats: DownloadStats) -> int:
@@ -394,7 +410,7 @@ class BinanceVision:
             stats.suspect += 1
             final = root / "_suspect" / out.relative_to(root)
             final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(tmp, final)
+        retry_fs(os.replace, tmp, final)
         digest = sha256_file(final)
         write_sidecar(final, digest)
         (final.with_name(final.name + ".quality.json")).write_bytes(orjson.dumps(quality, option=orjson.OPT_INDENT_2))
