@@ -223,3 +223,19 @@ async def test_stale_feed_triggers_reconnect(fake, tmp_path):
         assert conn.stats.last_disconnect_reason == "stale_feed"
     finally:
         await conn.stop()
+
+
+async def test_stop_during_rotation_closes_both_sockets(fake, tmp_path):
+    """stop() racing a make-before-break rotation used to leave the new socket open (and read by
+    nobody); on Windows the leaked sockets stalled the fake's writer and hung later tests."""
+    import random
+    cfg = make_cfg(fake, tmp_path)
+    rng = random.Random(3)
+    for _ in range(6):
+        conn, _frames = await _collect(cfg, fake, ["btcusdt@bookTicker"], conn_max_age_s=0.3)
+        conn.start()
+        await asyncio.sleep(1.0 + rng.random() * 1.2)        # watchdog ticks 1 s: lands in/around rotations
+        async with asyncio.timeout(15):
+            await conn.stop()
+        await asyncio.sleep(0.2)
+        assert not [c for c in fake.clients if "btcusdt@bookTicker" in c.streams]   # nothing left open

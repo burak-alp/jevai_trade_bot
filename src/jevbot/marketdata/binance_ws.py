@@ -89,6 +89,7 @@ class WsConnection:
         self._pending: dict[int, tuple[str, list[str]]] = {}
         self._rotate_at_mono = 0
         self._rotate_due = False
+        self._pending_ws: ClientConnection | None = None      # new socket during make-before-break
         self._close_reason: str | None = None
         self.lag_ewma_ms = 0.0
         self._last_stale_mono = -10**12
@@ -124,14 +125,14 @@ class WsConnection:
 
     async def stop(self) -> None:
         self._stopping = True
-        if self._ws is not None:
-            await self._ws.close()
+        for ws in (self._ws, self._pending_ws):              # a rotation may hold a second socket
+            if ws is not None:
+                await ws.close()
         if self._task is not None:
             self._task.cancel()
-            try:
-                await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
+            done, _ = await asyncio.wait({self._task}, timeout=15)
+            if not done:
+                log.error("ws_stop_timeout", conn=self.name)
             self._task = None
 
     async def ping_rtt(self, timeout: float = 10.0) -> float:
@@ -139,7 +140,8 @@ class WsConnection:
         if self._ws is None:
             raise ConnectionError(f"{self.name}: not connected")
         waiter = await self._ws.ping()
-        return float(await asyncio.wait_for(waiter, timeout))
+        async with asyncio.timeout(timeout):
+            return float(await waiter)
 
     def force_reconnect(self) -> None:
         """Test/ops hook: drop the socket; the run loop reconnects."""
@@ -326,7 +328,8 @@ class WsConnection:
                 await self._close_for("silence", ws)
             elif silent_for >= silence_ms and now >= next_probe:
                 try:
-                    await asyncio.wait_for(await ws.ping(), timeout=min(5.0, cfg.ping_timeout_s))
+                    async with asyncio.timeout(min(5.0, cfg.ping_timeout_s)):
+                        await (await ws.ping())
                     self.stats.silent_but_alive += 1
                     next_probe = mono_ms() + silence_ms
                     log.info("ws_silent_but_alive", conn=self.name, silent_ms=silent_for)
@@ -360,6 +363,8 @@ class WsConnection:
                         return self._close_reason
                     return close_reason(e)
                 self._deliver(raw)
+                if self._stopping:
+                    return "stopped"
                 if self._rotate_due:
                     self._rotate_due = False
                     new_ws = await self._rotate(ws)
@@ -376,12 +381,14 @@ class WsConnection:
         log.info("ws_rotate_start", conn=self.name)
         new: ClientConnection | None = None
         try:
-            new = await self._open()
-            first = await asyncio.wait_for(new.recv(), timeout=self.cfg.silence_timeout_s)
+            new = self._pending_ws = await self._open()
+            async with asyncio.timeout(self.cfg.silence_timeout_s):
+                first = await new.recv()
         except Exception as e:
             log.warning("ws_rotate_failed", conn=self.name, err=repr(e))
             if new is not None:
                 await new.close()
+            self._pending_ws = None
             return None
         # Drain frames already buffered on the old socket. The old socket keeps receiving live
         # data until it is closed, so the drain is time-bounded; frames that overlap with the
@@ -389,11 +396,16 @@ class WsConnection:
         drain_deadline = mono_ms() + 500
         while mono_ms() < drain_deadline:
             try:
-                raw = await asyncio.wait_for(old.recv(), timeout=0.05)
-            except (asyncio.TimeoutError, ConnectionClosed):
+                async with asyncio.timeout(0.05):
+                    raw = await old.recv()
+            except (TimeoutError, ConnectionClosed):
                 break
             self._deliver(raw)
         await old.close()
+        self._pending_ws = None
+        if self._stopping:                                   # stop() arrived mid-rotation
+            await new.close()
+            return None
         self.stats.rotations += 1
         self._mark_connected(new, rotated=True)
         self._deliver(first)
