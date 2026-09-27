@@ -35,7 +35,7 @@ class A0Config:
     symbols: list[str]
     start: date
     end: date                               # exclusive
-    tradable_top: int = 50                  # tradable universe = top-N by median 24 h quote volume
+    tradable_top: int = 50                  # PIT universe: daily top-N by trailing 24 h quote volume
     max_positions: int = 3
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     bootstrap: int = 2000
@@ -118,10 +118,26 @@ def portfolio_sim(rows: list[dict[str, Any]], max_positions: int) -> dict[str, A
     }
 
 
+def _universe_stats(feats: dict[str, Any], top: int) -> dict[str, Any]:
+    """Which loaded symbols were ever in the daily top-N; a pool that barely exceeds N means the
+    run is close to a fixed (today's) cohort -> survivorship bias (download ``universe-pool``)."""
+    from jevbot.research.scanner import _xs_rank
+    from jevbot.research.universe import daily_universe_mask
+    syms = list(feats)
+    J = min(sf.n_ticks for sf in feats.values())
+    qv = np.stack([feats[s].f["qv_24h"][:J] for s in syms], axis=1)
+    mask = daily_universe_mask(_xs_rank(qv), np.asarray(feats[syms[0]].tick_time(np.arange(J))), top)
+    ever = [s for s, m in zip(syms, mask.any(axis=0)) if m]
+    return {"mode": "pit_daily", "top": top, "pool": len(syms), "ever_tradable": len(ever),
+            "never_tradable": sorted(set(syms) - set(ever)),
+            "note": "tradable at tick = top-N by trailing 24 h quote volume at the day's first tick, "
+                    "ranked within the loaded pool; the pool must contain every day's top-N"}
+
+
 def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
     t0 = time.time()
     start, end = _ms(cfg.start), _ms(cfg.end)
-    feats, fund, med_qv = {}, {}, {}
+    feats, fund = {}, {}
     for s in cfg.symbols:                                   # pass 1: features (1m bars discarded)
         b = load_symbol(cfg.hist_root, s, start, end)
         if b.first_minute < 0:
@@ -129,11 +145,9 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
             continue
         fund[s] = load_funding(cfg.hist_root, s)
         feats[s] = compute_symbol_features(b, fund[s])
-        med_qv[s] = float(np.nanmedian(feats[s].f["qv_24h"]))
     add_market_context(feats)
-    ranked = sorted(med_qv, key=lambda s: -med_qv[s] if np.isfinite(med_qv[s]) else 0)
-    tradable = set(ranked[:cfg.tradable_top])
-    props = scan(feats, cfg.scanner, tradable=tradable)
+    props = scan(feats, cfg.scanner, tradable_top=cfg.tradable_top)
+    universe = _universe_stats(feats, cfg.tradable_top)
     by_sym: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for p in props:
         by_sym[p["symbol"]].append(p)
@@ -156,7 +170,7 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
         sha = ""
     summary = {
         "arm": "A0", "git_sha": sha, "feature_schema": FEATURE_SCHEMA, "label_version": LABEL_VERSION,
-        "period": [str(cfg.start), str(cfg.end)], "symbols_loaded": len(feats), "tradable": sorted(tradable),
+        "period": [str(cfg.start), str(cfg.end)], "symbols_loaded": len(feats), "universe": universe,
         "proposals": len(props), "labelled": len(labelled),
         "data_gaps": sum(1 for p in props if p.get("exit_type") == "data_gap"),
         "groups": groups, "portfolio": port, "scanner_config": cfg.scanner.to_dict(),
@@ -181,7 +195,8 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
 def to_markdown(s: dict[str, Any]) -> str:
     v = s["verdict"]
     L = [f"# Arm A0 replay {s['period'][0]} → {s['period'][1]}", "",
-         f"symbols {s['symbols_loaded']} · tradable {len(s['tradable'])} · proposals {s['proposals']} · "
+         f"symbols {s['symbols_loaded']} · PIT universe top {s['universe']['top']} daily "
+         f"({s['universe']['ever_tradable']} ever tradable) · proposals {s['proposals']} · "
          f"labelled {s['labelled']} · data gaps {s['data_gaps']} · runtime {s['runtime_s']} s", "",
          f"**Verdict:** gross edge {'YES' if v['gross_edge'] else 'NO'} · net edge {'YES' if v['net_edge'] else 'NO'} "
          f"({v['note']})", "",

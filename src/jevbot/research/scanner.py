@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from jevbot.research.features import SymbolFeatures
+from jevbot.research.universe import daily_universe_mask
 
 FAMILY_VERSION = {"BRK": "brk.v1", "PB": "pb.v1"}
 SIDE_ALIGNED = {"taker_imb_15m", "resid_ret_1h_atr", "ema_spread_atr"}   # ranking uses side * value
@@ -96,13 +97,19 @@ def _xs_rank(x: np.ndarray) -> np.ndarray:
     return np.where(np.isnan(x), 10**9, rank)
 
 
-def scan(feats: dict[str, SymbolFeatures], cfg: ScannerConfig, tradable: set[str] | None = None) -> list[dict[str, Any]]:
+def scan(feats: dict[str, SymbolFeatures], cfg: ScannerConfig, tradable: set[str] | None = None,
+         tradable_top: int | None = None) -> list[dict[str, Any]]:
+    """``tradable_top``: point-in-time universe, top-N by trailing 24 h quote volume refreshed at
+    the first tick of each UTC day (``universe.daily_universe_mask``); ``tradable``: fixed set."""
     symbols = list(feats)
     J = min(sf.n_ticks for sf in feats.values())
     F = {k: _stack(feats, k, J) for k in next(iter(feats.values())).f}
     close, atr, atr_pct = F["close"], F["atr_15m"], F["atr_pct"]
     vol_rank = _xs_rank(F["qv_24h"])
     trad = np.array([tradable is None or s in tradable for s in symbols])[None, :]
+    if tradable_top is not None:
+        trad = trad & daily_universe_mask(vol_rank, np.asarray(next(iter(feats.values())).tick_time(np.arange(J))),
+                                          tradable_top)
     with np.errstate(invalid="ignore"):
         eligible = (trad & (F["qv_24h"] >= cfg.min_qv_24h) & (atr_pct >= cfg.atr_pct_min)
                     & (atr_pct <= cfg.atr_pct_max) & (F["listing_age_d"] >= cfg.min_listing_age_d)

@@ -118,6 +118,8 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
     if args.symbols == "ALL":
         symbols = sorted({e.get("symbol") for e in read_manifest(hist / "klines" / "1m").values()
                           if e.get("symbol") and e.get("quality") != "suspect"})
+    elif args.symbols.startswith("@"):               # universe-pool JSON output
+        symbols = list(orjson.loads(Path(args.symbols[1:]).read_bytes())["pool"])
     else:
         symbols = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
     if "BTCUSDT" not in symbols:
@@ -129,6 +131,23 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
     sys.stdout.write(to_markdown(summary))
     sys.stdout.write(f"\noutput: {out}\n")
     return 0
+
+
+def cmd_universe_pool(args: argparse.Namespace) -> int:
+    from datetime import date
+    from pathlib import Path
+
+    from jevbot.research.universe import candidate_pool
+
+    cfg = _load(args)
+    hist = Path(args.hist) if args.hist else Path(cfg.data_dir) / "hist" / "um"
+    res = candidate_pool(hist, date.fromisoformat(args.start), date.fromisoformat(args.end), args.top)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(orjson.dumps(res, option=orjson.OPT_INDENT_2))
+    sys.stdout.write(f"pool {len(res['pool'])} symbols (of {res['symbols_seen']} with 1d klines), "
+                     f"days short of top {res['top']}: {len(res['days_short'])}\n{','.join(res['pool'])}\n")
+    return 0 if res["pool"] and not res["days_short"] else 6
 
 
 def cmd_compact(args: argparse.Namespace) -> int:
@@ -245,13 +264,23 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("research-a0", help="Arm A0 historical replay: scanner proposals, labels, edge stats")
     _add_common(p)
     p.add_argument("--hist", default=None, help="historical root (default: <data_dir>/hist/um)")
-    p.add_argument("--symbols", default="ALL", help="comma separated or ALL (every symbol with 1m klines)")
+    p.add_argument("--symbols", default="ALL", help="comma separated, ALL (every symbol with 1m klines) or @pool.json (universe-pool)")
     p.add_argument("--start", required=True, help="YYYY-MM-DD inclusive")
     p.add_argument("--end", required=True, help="YYYY-MM-DD exclusive")
-    p.add_argument("--tradable-top", type=int, default=50, help="tradable = top-N by median 24h quote volume")
+    p.add_argument("--tradable-top", type=int, default=50, help="PIT tradable universe: daily top-N by trailing 24h quote volume")
     p.add_argument("--max-positions", type=int, default=3)
     p.add_argument("--out", default=None, help="output dir (default: <data_dir>/research/a0-<ts>)")
     p.set_defaults(func=cmd_research_a0)
+
+    p = sub.add_parser("universe-pool", help="symbols to download so every day's top-N (by prior-day 1d quote "
+                                             "volume, delisted included) is present for replay")
+    _add_common(p)
+    p.add_argument("--hist", default=None, help="historical root with klines/1d (default: <data_dir>/hist/um)")
+    p.add_argument("--start", required=True, help="YYYY-MM-DD inclusive")
+    p.add_argument("--end", required=True, help="YYYY-MM-DD exclusive")
+    p.add_argument("--top", type=int, default=60, help="daily top-N (margin above the tradable 50)")
+    p.add_argument("--out", required=True, help="output JSON (pass to research-a0 --symbols @file)")
+    p.set_defaults(func=cmd_universe_pool)
 
     p = sub.add_parser("compact", help="merge small recorder parts into hourly/daily sorted files (verified, atomic)")
     _add_common(p)

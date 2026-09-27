@@ -43,6 +43,7 @@ def test_run_a0_end_to_end(tmp_path):
     assert t.num_rows == s["proposals"] and {"net_r", "gross_r", "exit_type", "cost_r"} <= set(t.column_names)
     assert orjson.loads((tmp_path / "out" / "summary.json").read_bytes())["arm"] == "A0"
     assert "Verdict" in (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
+    assert s["universe"]["mode"] == "pit_daily" and s["universe"]["pool"] == 4
     g = s["groups"]["all"]
     assert g["mean_net_r"] < g["mean_gross_r"]                # costs always reduce R
 
@@ -52,6 +53,7 @@ def test_cli_research_a0(tmp_path):
     hist = tmp_path / "hist"
     btc = make_symbol(hist, "BTCUSDT", START, DAYS * 1440, seed=1, base=60000)
     make_symbol(hist, "S0USDT", START, DAYS * 1440, seed=5, btc=btc, beta=1.0, events=[(15 * 1440, 0.06, 45)])
-    code = main(["research-a0", "--hist", str(hist), "--start", "2024-01-01", "--end", "2024-01-21",
-                 "--out", str(tmp_path / "o"), "--set", "logging.json=false"])
+    (tmp_path / "pool.json").write_bytes(orjson.dumps({"pool": ["S0USDT"]}))
+    code = main(["research-a0", "--hist", str(hist), "--symbols", f"@{tmp_path / 'pool.json'}", "--start",
+                 "2024-01-01", "--end", "2024-01-21", "--out", str(tmp_path / "o"), "--set", "logging.json=false"])
     assert code == 0 and (tmp_path / "o" / "summary.json").exists()
