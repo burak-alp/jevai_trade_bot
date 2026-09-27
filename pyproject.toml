@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 fast = ["uvloop>=0.19; sys_platform != 'win32'"]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-timeout>=2.2"]
 
 [project.scripts]
 jevbot = "jevbot.cli:main"
@@ -32,4 +32,5 @@ packages = ["src/jevbot"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+timeout = 180                     # a hung test fails with a traceback instead of stalling CI
 markers = ["integration: uses a local fake exchange (no internet)"]
