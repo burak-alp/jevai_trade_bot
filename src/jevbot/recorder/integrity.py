@@ -40,7 +40,7 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
 
 def write_sidecar(path: Path, digest: str) -> Path:
     side = path.with_name(path.name + ".sha256")
-    side.write_text(f"{digest}  {path.name}\n")
+    side.write_text(f"{digest}  {path.name}\n", encoding="utf-8")
     return side
 
 
@@ -48,7 +48,7 @@ def read_sidecar(path: Path) -> str | None:
     side = path.with_name(path.name + ".sha256")
     if not side.exists():
         return None
-    parts = side.read_text().split()
+    parts = side.read_text(encoding="utf-8").split()
     return parts[0] if parts else None
 
 

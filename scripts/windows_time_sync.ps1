@@ -7,6 +7,8 @@ w32tm /config /manualpeerlist:"time.google.com,0x9 time.cloudflare.com,0x9 time.
 Set-ItemProperty -Path $ntp -Name SpecialPollInterval -Value 64
 # Windows clamps SpecialPollInterval to 2^MinPollInterval (1024 s by default).
 Set-ItemProperty -Path $config -Name MinPollInterval -Value 6
+# W32Time otherwise expands the live poll interval back to hours over time.
+Set-ItemProperty -Path $config -Name MaxPollInterval -Value 6
 # Apply phase corrections each second (100 * 10 ms), rather than the current 1-hour interval.
 Set-ItemProperty -Path $config -Name UpdateInterval -Value 100
 Set-Service w32time -StartupType Automatic
