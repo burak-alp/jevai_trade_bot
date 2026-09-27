@@ -7,5 +7,5 @@ PermissionError'da üstel geri çekilmeyle 6 kez denenir; geçici dosya temizli�
 `hist_tmp_cleanup_failed`). Regresyon testi düzeltme olmadan kırılıyor; toplam 96 test.
 
 Çalışan pipeline'ı (PID 2916/17696) **durdurma, ortasında pull etme**. Bitince `git pull`; pipeline yine
-bir kilitte durursa pull edip sadece kalan adımı tekrar çalıştır. `data/_tmp` altında kalan `*.part` dosyaları
+bir kilitte durursa pull edip sadece kalan adımı tekrar çalıştır. `data/hist/um/_tmp` altında kalan `*.part` dosyaları
 silinebilir. Sonraki rapor: A0 full/h1/h2 sonuçları (önceki format) + 24 h soak.
