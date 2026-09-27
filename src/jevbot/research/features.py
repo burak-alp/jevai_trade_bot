@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
-from jevbot.research.data import MIN, SymbolBars
+from jevbot.research.data import DAY, MIN, SymbolBars
 
 FEATURE_SCHEMA = "f.v1-hist"
 
@@ -45,7 +45,7 @@ def resample(b: SymbolBars, k: int) -> dict[str, np.ndarray]:
 
 def wilder_atr(h: np.ndarray, l: np.ndarray, c: np.ndarray, n: int = 14) -> np.ndarray:
     prev_c = np.concatenate([[np.nan], c[:-1]])
-    tr = np.nanmax(np.stack([h - l, np.abs(h - prev_c), np.abs(l - prev_c)]), axis=0)
+    tr = np.fmax(np.fmax(h - l, np.abs(h - prev_c)), np.abs(l - prev_c))      # NaN-ignoring, no warnings
     tr = np.where(np.isnan(h) | np.isnan(l), np.nan, tr)
     out = np.full_like(c, np.nan)
     atr, cnt, acc = np.nan, 0, 0.0
@@ -180,7 +180,8 @@ def compute_symbol_features(b: SymbolBars, funding: tuple[np.ndarray, np.ndarray
             "swing_low_2h": rolling(b5["low"], 24, "min"),
             "swing_high_2h": rolling(b5["high"], 24, "max"),
             "qv_24h": rolling(b5["qv"], 288, "sum"),
-            "listing_age_d": np.where(b.first_minute >= 0, (5 * j + 5 - b.first_minute) / 1440.0, np.nan),
+            "listing_age_d": ((b.start + (5 * j + 5) * MIN - b.listing_time) / DAY if b.listing_time is not None
+                              else np.where(b.first_minute >= 0, (5 * j + 5 - b.first_minute) / 1440.0, np.nan)),
         }
     if funding is not None and len(funding[0]):
         tt = b.start + (5 * j + 5) * MIN

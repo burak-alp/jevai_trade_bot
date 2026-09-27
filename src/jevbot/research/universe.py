@@ -60,5 +60,15 @@ def candidate_pool(hist_root: Path, start: date, end: date, top: int) -> dict[st
             "pool": sorted(pool), "per_day": per_day, "days_short": missing_days}
 
 
+def pit_first_listing(hist_root: Path) -> dict[str, int]:
+    """symbol -> first daily kline date (epoch ms) from the downloader's PIT listing; {} if absent."""
+    out: dict[str, int] = {}
+    for f in sorted((Path(hist_root) / "_pit").glob("symbol_listing-klines-*.parquet")):
+        for r in pq.read_table(f, columns=["symbol", "first_date"]).to_pylist():
+            t = _ms(date.fromisoformat(r["first_date"]))
+            out[r["symbol"]] = min(out.get(r["symbol"], t), t)
+    return out
+
+
 def _ms(d: date) -> int:
     return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)

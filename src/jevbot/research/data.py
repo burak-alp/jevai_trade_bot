@@ -35,6 +35,7 @@ class SymbolBars:
     mark_high: np.ndarray           # mark-price klines (stop checks); NaN where unavailable
     mark_low: np.ndarray
     first_minute: int               # first minute with data (listing proxy); -1 if none
+    listing_time: int | None = None  # PIT listing (epoch ms) when known; overrides the first-minute proxy
 
     @property
     def n(self) -> int:

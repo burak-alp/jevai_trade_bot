@@ -57,3 +57,53 @@ def test_cli_research_a0(tmp_path):
     code = main(["research-a0", "--hist", str(hist), "--symbols", f"@{tmp_path / 'pool.json'}", "--start",
                  "2024-01-01", "--end", "2024-01-21", "--out", str(tmp_path / "o"), "--set", "logging.json=false"])
     assert code == 0 and (tmp_path / "o" / "summary.json").exists()
+
+
+def _world(tmp_path):
+    hist = tmp_path / "hist"
+    btc = make_symbol(hist, "BTCUSDT", START, DAYS * 1440, seed=1, base=60000)
+    for i in range(3):
+        make_symbol(hist, f"S{i}USDT", START, DAYS * 1440, seed=5 + i, btc=btc, beta=1.0,
+                    events=[(15 * 1440 + 97 * i, 0.06 * (1 if i % 2 == 0 else -1), 45),
+                            (6 * 1440 + 50 * i, 0.05 * (-1 if i % 2 == 0 else 1), 40)])
+    return hist
+
+
+def test_chunked_run_matches_single_chunk(tmp_path):
+    """Warm-up makes chunk features identical; only the cooldown resets at chunk boundaries."""
+    hist = _world(tmp_path)
+    base = dict(hist_root=hist, symbols=["BTCUSDT", "S0USDT", "S1USDT", "S2USDT"], start=D0,
+                end=D0 + timedelta(days=DAYS), tradable_top=4, bootstrap=50,
+                scanner=ScannerConfig(min_qv_24h=0, min_listing_age_d=0))
+    run_a0(A0Config(**base, chunk_days=100), tmp_path / "one")
+    run_a0(A0Config(**base, chunk_days=4), tmp_path / "chunks")
+    key = lambda r: (r["t_decision"], r["symbol"], r["family"], r["side"])  # noqa: E731
+    one = {key(r): r for r in pq.read_table(tmp_path / "one" / "proposals.parquet").to_pylist()}
+    ch = {key(r): r for r in pq.read_table(tmp_path / "chunks" / "proposals.parquet").to_pylist()}
+    assert one and set(one) <= set(ch)
+    bounds = [START + k * 4 * 86_400_000 for k in range(1, DAYS // 4)]
+    cooldown = 6 * 5 * 60_000
+    assert all(any(0 < k[0] - b <= cooldown for b in bounds) for k in set(ch) - set(one))
+    for k, r in one.items():
+        assert abs(r["stop_dist"] - ch[k]["stop_dist"]) < 1e-9 and r["exit_type"] == ch[k]["exit_type"]
+        if r["exit_type"] in ("TP", "SL", "TIME"):
+            assert abs(r["net_r"] - ch[k]["net_r"]) < 1e-9
+
+
+def test_per_day_pool_and_pit_listing_age(tmp_path):
+    import pyarrow as pa
+    hist = _world(tmp_path)
+    (hist / "_pit").mkdir()
+    pq.write_table(pa.table({"symbol": ["S0USDT", "S1USDT", "S2USDT", "BTCUSDT"],
+                             "first_date": ["2023-01-01", "2023-01-01", "2024-01-10", "2020-01-01"]}),
+                   hist / "_pit" / "symbol_listing-klines-1m.parquet")
+    per_day = {str(D0 + timedelta(days=d)): (["S0USDT", "S2USDT"] if d >= 10 else ["S0USDT"]) for d in range(DAYS)}
+    cfg = A0Config(hist_root=hist, symbols=[], start=D0, end=D0 + timedelta(days=DAYS), tradable_top=4,
+                   bootstrap=50, chunk_days=10, per_day=per_day, scanner=ScannerConfig(min_qv_24h=0))
+    s = run_a0(cfg, tmp_path / "o")
+    rows = pq.read_table(tmp_path / "o" / "proposals.parquet").to_pylist()
+    assert {r["symbol"] for r in rows} <= {"BTCUSDT", "S0USDT", "S2USDT"}          # S1 never loaded
+    assert s["universe"]["pool"] == 3
+    s0 = [r for r in rows if r["symbol"] == "S0USDT"]
+    assert s0 and all(r["listing_age_d"] > 300 for r in s0)                  # PIT date, not data start
+    assert all(r["listing_age_d"] >= 14 for r in rows if r["symbol"] == "S2USDT")   # listed 01-10: gated

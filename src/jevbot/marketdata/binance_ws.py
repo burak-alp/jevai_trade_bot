@@ -27,7 +27,7 @@ from websockets.exceptions import ConnectionClosed, InvalidURI
 from jevbot.core.config import WsConfig
 from jevbot.core.logging import get_logger
 from jevbot.core.time import mono_ms, now_ms
-from jevbot.marketdata.endpoints import combined_stream_url, route_of
+from jevbot.marketdata.endpoints import combined_stream_url, family_of, route_of
 
 log = get_logger(__name__)
 
@@ -40,6 +40,7 @@ def close_reason(e: ConnectionClosed) -> str:
     if e.sent is not None:
         return f"closed:local_{e.sent.code}"
     return "closed:nocode"
+
 
 FrameHandler = Callable[[bytes | str, int, "WsConnection"], None]
 StateHandler = Callable[["WsConnection", str, dict[str, Any]], None]
@@ -414,15 +415,20 @@ class WsPool:
         return [c for lst in self.conns.values() for c in lst]
 
     def set_streams(self, streams: Iterable[str]) -> None:
-        by_route: dict[str, list[str]] = {}
+        """Groups = route, or ``route-family`` for families in ``family_conn_max`` (dedicated sockets)."""
+        by_group: dict[str, list[str]] = {}
         for s in dict.fromkeys(streams):
-            by_route.setdefault(route_of(s, self.cfg), []).append(s)
-        for route in set(self.conns) | set(by_route):
-            self._rebalance(route, by_route.get(route, []))
+            fam = family_of(s)
+            route = route_of(s, self.cfg)
+            by_group.setdefault(f"{route}-{fam}" if fam in self.cfg.family_conn_max else route, []).append(s)
+        for group in set(self.conns) | set(by_group):
+            self._rebalance(group, by_group.get(group, []))
 
-    def _rebalance(self, route: str, desired_list: list[str]) -> None:
+    def _rebalance(self, group: str, desired_list: list[str]) -> None:
+        route, _, fam = group.partition("-")
+        cap = self.cfg.family_conn_max.get(fam, self.cfg.max_streams_per_conn) if fam else self.cfg.max_streams_per_conn
         desired = set(desired_list)
-        conns = self.conns.setdefault(route, [])
+        conns = self.conns.setdefault(group, [])
         have: set[str] = set()
         for c in conns:
             drop = [s for s in c.streams if s not in desired]
@@ -433,13 +439,14 @@ class WsPool:
         for c in conns:
             if not missing:
                 break
-            take, missing = missing[:max(0, c.room())], missing[max(0, c.room()):]
+            room = max(0, min(c.room(), cap - len(c.streams)))
+            take, missing = missing[:room], missing[room:]
             if take:
                 c.add_streams(take)
         while missing:
-            take, missing = missing[:self.cfg.max_streams_per_conn], missing[self.cfg.max_streams_per_conn:]
+            take, missing = missing[:cap], missing[cap:]
             self._seq += 1
-            c = WsConnection(f"{route}-{self._seq}", route, self.cfg, self.on_frame, self.on_state)
+            c = WsConnection(f"{group}-{self._seq}", route, self.cfg, self.on_frame, self.on_state)
             c.add_streams(take)
             conns.append(c)
             if self._started:

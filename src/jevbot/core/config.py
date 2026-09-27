@@ -35,6 +35,8 @@ class WsConfig:
     routes: dict[str, str] = field(default_factory=lambda: {"public": "/public", "market": "/market", "private": "/private"})
     stream_routes: dict[str, str] = field(default_factory=dict)
     max_streams_per_conn: int = 100
+    # families listed here get dedicated connections with this many streams each (e.g. bookTicker: 15)
+    family_conn_max: dict[str, int] = field(default_factory=dict)
     max_control_msgs_per_sec: float = 4.0
     subscribe_chunk: int = 50
     conn_max_age_s: float = 82800.0

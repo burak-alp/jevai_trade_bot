@@ -4,7 +4,12 @@
 binance:
   ws:
     compression: true               # permessage-deflate; JSON shrinks several-fold if the server accepts it
+    # 24 h soak: /public socket (50 bookTicker + 12 depth) dropped ~80/h with low loop lag and no local
+    # load (reports/local/20260927T173519Z) -> bookTicker on its own small sockets, depth separate.
+    family_conn_max:
+      bookTicker: 15
+      depth: 50
 recorder:
-  book_ticker_max_symbols: 50       # reduce the busy public socket after the top-100 profile stalled
+  book_ticker_max_symbols: 30       # 100 stalled, 50 dropped ~80/h in the 24 h soak -> 30 (2 x 15 per socket)
   depth:
     top_n_by_volume: 10

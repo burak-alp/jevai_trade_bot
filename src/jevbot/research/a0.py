@@ -25,6 +25,7 @@ from jevbot.research.data import DAY, load_funding, load_symbol
 from jevbot.research.features import FEATURE_SCHEMA, add_market_context, compute_symbol_features
 from jevbot.research.labels import LABEL_VERSION, label_all
 from jevbot.research.scanner import ScannerConfig, scan
+from jevbot.research.universe import pit_first_listing
 
 log = get_logger(__name__)
 
@@ -40,6 +41,9 @@ class A0Config:
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     bootstrap: int = 2000
     seed: int = 7
+    per_day: dict[str, list[str]] | None = None   # universe-pool: day -> that day's top-N (loads only these)
+    chunk_days: int = 30                    # bounded memory: features/scan per time chunk
+    warmup_days: int = 30                   # feature warm-up before each chunk (BTC vol state uses 30 d)
 
 
 def _ms(d: date) -> int:
@@ -119,41 +123,79 @@ def portfolio_sim(rows: list[dict[str, Any]], max_positions: int) -> dict[str, A
 
 
 def _universe_stats(feats: dict[str, Any], top: int) -> dict[str, Any]:
-    """Which loaded symbols were ever in the daily top-N; a pool that barely exceeds N means the
-    run is close to a fixed (today's) cohort -> survivorship bias (download ``universe-pool``)."""
+    """Loaded symbols that were in the daily top-N at least once in this chunk."""
     from jevbot.research.scanner import _xs_rank
     from jevbot.research.universe import daily_universe_mask
     syms = list(feats)
     J = min(sf.n_ticks for sf in feats.values())
     qv = np.stack([feats[s].f["qv_24h"][:J] for s in syms], axis=1)
     mask = daily_universe_mask(_xs_rank(qv), np.asarray(feats[syms[0]].tick_time(np.arange(J))), top)
-    ever = [s for s, m in zip(syms, mask.any(axis=0)) if m]
-    return {"mode": "pit_daily", "top": top, "pool": len(syms), "ever_tradable": len(ever),
-            "never_tradable": sorted(set(syms) - set(ever)),
-            "note": "tradable at tick = top-N by trailing 24 h quote volume at the day's first tick, "
-                    "ranked within the loaded pool; the pool must contain every day's top-N"}
+    return {"ever": [s for s, m in zip(syms, mask.any(axis=0)) if m]}
+
+
+def _chunk_features(cfg: A0Config, syms: list[str], c0: int, c1: int,
+                    listing: dict[str, int]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Features for [c0, c1) computed on [c0 - warmup, c1) and trimmed to the chunk's ticks."""
+    w0 = c0 - cfg.warmup_days * DAY
+    k0 = (c0 - w0) // (5 * 60_000)
+    btc = "BTCUSDT"
+    feats, fund = {}, {}
+    order = [btc] + [s for s in syms if s != btc] if btc in syms else syms
+    btc_sf = None
+    for s in order:                                         # one symbol's 1m bars in memory at a time
+        b = load_symbol(cfg.hist_root, s, w0, c1)
+        if b.first_minute < 0:
+            continue
+        b.listing_time = listing.get(s)                     # PIT listing date, not first minute in the window
+        fund[s] = load_funding(cfg.hist_root, s)
+        sf = compute_symbol_features(b, fund[s])
+        if s == btc:
+            btc_sf = sf
+        pair = {btc: btc_sf, s: sf} if btc_sf is not None else {s: sf}
+        add_market_context(pair)
+        feats[s] = sf
+    for sf in feats.values():                               # trim warm-up ticks
+        sf.f = {k: v[k0:] for k, v in sf.f.items()}
+        sf.start, sf.n_ticks = c0, sf.n_ticks - k0
+    return feats, fund
 
 
 def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
     t0 = time.time()
     start, end = _ms(cfg.start), _ms(cfg.end)
-    feats, fund = {}, {}
-    for s in cfg.symbols:                                   # pass 1: features (1m bars discarded)
-        b = load_symbol(cfg.hist_root, s, start, end)
-        if b.first_minute < 0:
-            log.warning("a0_symbol_no_data", symbol=s)
+    listing = pit_first_listing(cfg.hist_root)
+    props: list[dict[str, Any]] = []
+    loaded: set[str] = set()
+    ever: set[str] = set()
+    chunks = 0
+    for c0 in range(start, end, cfg.chunk_days * DAY):
+        c1 = min(end, c0 + cfg.chunk_days * DAY)
+        if cfg.per_day is not None:
+            days = [str(datetime.fromtimestamp(t / 1000, timezone.utc).date()) for t in range(c0, c1, DAY)]
+            syms = sorted({"BTCUSDT"} | {s for d in days for s in cfg.per_day.get(d, [])})
+        else:
+            syms = list(cfg.symbols)
+        feats, fund = _chunk_features(cfg, syms, c0, c1, listing)
+        if not feats:
             continue
-        fund[s] = load_funding(cfg.hist_root, s)
-        feats[s] = compute_symbol_features(b, fund[s])
-    add_market_context(feats)
-    props = scan(feats, cfg.scanner, tradable_top=cfg.tradable_top)
-    universe = _universe_stats(feats, cfg.tradable_top)
-    by_sym: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for p in props:
-        by_sym[p["symbol"]].append(p)
-    for s, ps in by_sym.items():                            # pass 2: labels (reload 1m bars per symbol)
-        b = load_symbol(cfg.hist_root, s, start, end)
-        label_all(ps, {s: b}, {s: fund.get(s)}, cfg.scanner.cost)
+        chunks += 1
+        loaded.update(feats)
+        ever.update(_universe_stats(feats, cfg.tradable_top)["ever"])
+        cp = scan(feats, cfg.scanner, tradable_top=cfg.tradable_top)
+        del feats
+        by_sym: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for p in cp:
+            by_sym[p["symbol"]].append(p)
+        for s, ps in by_sym.items():                        # labels: chunk bars + 1 day for open horizons
+            b = load_symbol(cfg.hist_root, s, c0, min(end, c1 + DAY))
+            label_all(ps, {s: b}, {s: fund.get(s)}, cfg.scanner.cost)
+        props.extend(cp)
+        log.info("a0_chunk_done", start=c0, symbols=len(syms), proposals=len(cp))
+    universe = {"mode": "pit_daily", "top": cfg.tradable_top, "pool": len(loaded), "ever_tradable": len(ever),
+                "never_tradable": sorted(loaded - ever), "chunks": chunks, "chunk_days": cfg.chunk_days,
+                "warmup_days": cfg.warmup_days, "pool_file": cfg.per_day is not None,
+                "note": "tradable at tick = top-N by trailing 24 h quote volume at the day's first tick, ranked "
+                        "within the loaded pool; the pool must contain every day's top-N (universe-pool)"}
     labelled = [p for p in props if p.get("exit_type") in ("TP", "SL", "TIME")]
     sel = [p for p in labelled if p.get("selected")]
     groups: dict[str, Any] = {"all": group_stats(labelled, cfg), "selected": group_stats(sel, cfg)}
@@ -170,7 +212,7 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
         sha = ""
     summary = {
         "arm": "A0", "git_sha": sha, "feature_schema": FEATURE_SCHEMA, "label_version": LABEL_VERSION,
-        "period": [str(cfg.start), str(cfg.end)], "symbols_loaded": len(feats), "universe": universe,
+        "period": [str(cfg.start), str(cfg.end)], "symbols_loaded": len(loaded), "universe": universe,
         "proposals": len(props), "labelled": len(labelled),
         "data_gaps": sum(1 for p in props if p.get("exit_type") == "data_gap"),
         "groups": groups, "portfolio": port, "scanner_config": cfg.scanner.to_dict(),

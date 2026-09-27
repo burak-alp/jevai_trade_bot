@@ -115,11 +115,13 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
 
     cfg = _load(args)
     hist = Path(args.hist) if args.hist else Path(cfg.data_dir) / "hist" / "um"
+    per_day = None
     if args.symbols == "ALL":
         symbols = sorted({e.get("symbol") for e in read_manifest(hist / "klines" / "1m").values()
                           if e.get("symbol") and e.get("quality") != "suspect"})
-    elif args.symbols.startswith("@"):               # universe-pool JSON output
-        symbols = list(orjson.loads(Path(args.symbols[1:]).read_bytes())["pool"])
+    elif args.symbols.startswith("@"):               # universe-pool JSON: pool + per-day top-N (chunk loads)
+        pool = orjson.loads(Path(args.symbols[1:]).read_bytes())
+        symbols, per_day = list(pool["pool"]), pool.get("per_day")
     else:
         symbols = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
     if "BTCUSDT" not in symbols:
@@ -127,7 +129,8 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else Path(cfg.data_dir) / "research" / f"a0-{now_ms()}"
     summary = run_a0(A0Config(hist_root=hist, symbols=symbols, start=date.fromisoformat(args.start),
                               end=date.fromisoformat(args.end), tradable_top=args.tradable_top,
-                              max_positions=args.max_positions), out)
+                              max_positions=args.max_positions, per_day=per_day,
+                              chunk_days=args.chunk_days), out)
     sys.stdout.write(to_markdown(summary))
     sys.stdout.write(f"\noutput: {out}\n")
     return 0
@@ -191,6 +194,8 @@ def cmd_download(args: argparse.Namespace) -> int:
                 return 2
             if args.symbols == "ALL":
                 symbols = await bv.list_symbols(args.dataset, args.granularity)
+            elif args.symbols.startswith("@"):       # universe-pool JSON
+                symbols = list(orjson.loads(Path(args.symbols[1:]).read_bytes())["pool"])
             else:
                 symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
             stats = await bv.download(args.dataset, symbols, date.fromisoformat(args.start),
@@ -269,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--end", required=True, help="YYYY-MM-DD exclusive")
     p.add_argument("--tradable-top", type=int, default=50, help="PIT tradable universe: daily top-N by trailing 24h quote volume")
     p.add_argument("--max-positions", type=int, default=3)
+    p.add_argument("--chunk-days", type=int, default=30, help="time chunk (bounded memory; 30 d warm-up each)")
     p.add_argument("--out", default=None, help="output dir (default: <data_dir>/research/a0-<ts>)")
     p.set_defaults(func=cmd_research_a0)
 
@@ -296,7 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dataset", required=True,
                    help="klines | markPriceKlines | indexPriceKlines | premiumIndexKlines | aggTrades | metrics | "
                         "fundingRate | bookDepth | pit-listing")
-    p.add_argument("--symbols", default=None, help="comma separated, or ALL (from the bucket listing)")
+    p.add_argument("--symbols", default=None, help="comma separated, ALL (bucket listing) or @pool.json")
     p.add_argument("--start", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--end", default=None, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--interval", default=None, help="kline interval, e.g. 1m (kline-type datasets)")
