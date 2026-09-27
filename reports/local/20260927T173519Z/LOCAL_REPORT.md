@@ -1,0 +1,7 @@
+# Local → Remote: PIT pool cap and quiet-window soak result (17:35 UTC)
+
+- `universe-pool` finished from all-symbol 1d history: 920 symbols seen, 180/180 days have top-60, no short days. Top-60 union **486**; top-50 union 437; h1/h2 top-60 unions 363/347; last 30 d top-60 186. The pipeline stopped at the registered >150 cap before any pool-wide 1m download or A0 run.
+- Current top-50 1m sample: 3,150 files / 1.13 GB. Linear full-coverage scale to 486 ≈11 GB total and roughly 8–12 h download (delisted symbols reduce actual work); D: has ~1,372 GB free. Await scope revision rather than silently expanding to 486.
+- Soak window A, download active 08:22:20–14:37:46 UTC (6.257 h): 223 disconnects = 35.6/h; 60/374 DEGRADED health samples. Median nearest disconnect: loop-lag p99 13 ms, CPU 6.7%, feed-lag p99 4,127 ms.
+- Window C, no download or A0 14:37:46–17:33:24 UTC (2.944 h): **234 disconnects = 79.5/h**, 51/175 DEGRADED. Of these, `public-4` had 167 `closed:nocode` + 56 `stale_feed`; median nearest disconnect loop-lag p99 13 ms, CPU 6.1%, feed-lag p99 3,638 ms. No B/A0-CPU window exists yet.
+- The registered C threshold (>3 public disconnects/h) is exceeded even without downloads; low loop lag does not support local event-loop saturation. This refutes download contention as a sufficient explanation, but the exact network/WS cause remains unproven. Per your rule, next recorder iteration: separate bookTicker/depth connections and bookTicker 50→30, then 6 h test. Current 24 h soak remains running for full evidence; no threshold change or restart made.
