@@ -105,6 +105,32 @@ def cmd_recording_report(args: argparse.Namespace) -> int:
     return 0 if "error" not in rep else 7
 
 
+def cmd_research_a0(args: argparse.Namespace) -> int:
+    from datetime import date
+    from pathlib import Path
+
+    from jevbot.core.time import now_ms
+    from jevbot.recorder.integrity import read_manifest
+    from jevbot.research.a0 import A0Config, run_a0, to_markdown
+
+    cfg = _load(args)
+    hist = Path(args.hist) if args.hist else Path(cfg.data_dir) / "hist" / "um"
+    if args.symbols == "ALL":
+        symbols = sorted({e.get("symbol") for e in read_manifest(hist / "klines" / "1m").values()
+                          if e.get("symbol") and e.get("quality") != "suspect"})
+    else:
+        symbols = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+    if "BTCUSDT" not in symbols:
+        symbols.insert(0, "BTCUSDT")                 # needed for beta / regime
+    out = Path(args.out) if args.out else Path(cfg.data_dir) / "research" / f"a0-{now_ms()}"
+    summary = run_a0(A0Config(hist_root=hist, symbols=symbols, start=date.fromisoformat(args.start),
+                              end=date.fromisoformat(args.end), tradable_top=args.tradable_top,
+                              max_positions=args.max_positions), out)
+    sys.stdout.write(to_markdown(summary))
+    sys.stdout.write(f"\noutput: {out}\n")
+    return 0
+
+
 def cmd_compact(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -215,6 +241,17 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.add_argument("--last-min", type=float, default=None, help="only the last N minutes (default: everything)")
     p.set_defaults(func=cmd_recording_report)
+
+    p = sub.add_parser("research-a0", help="Arm A0 historical replay: scanner proposals, labels, edge stats")
+    _add_common(p)
+    p.add_argument("--hist", default=None, help="historical root (default: <data_dir>/hist/um)")
+    p.add_argument("--symbols", default="ALL", help="comma separated or ALL (every symbol with 1m klines)")
+    p.add_argument("--start", required=True, help="YYYY-MM-DD inclusive")
+    p.add_argument("--end", required=True, help="YYYY-MM-DD exclusive")
+    p.add_argument("--tradable-top", type=int, default=50, help="tradable = top-N by median 24h quote volume")
+    p.add_argument("--max-positions", type=int, default=3)
+    p.add_argument("--out", default=None, help="output dir (default: <data_dir>/research/a0-<ts>)")
+    p.set_defaults(func=cmd_research_a0)
 
     p = sub.add_parser("compact", help="merge small recorder parts into hourly/daily sorted files (verified, atomic)")
     _add_common(p)
