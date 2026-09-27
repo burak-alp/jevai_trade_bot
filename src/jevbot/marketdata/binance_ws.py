@@ -31,6 +31,16 @@ from jevbot.marketdata.endpoints import combined_stream_url, route_of
 
 log = get_logger(__name__)
 
+
+def close_reason(e: ConnectionClosed) -> str:
+    """``closed:<code>`` = server sent a close frame; ``closed:local_1011`` = our keepalive ping
+    timed out (pong not seen: backlog or dead link); ``closed:nocode`` = TCP EOF/reset, no close frames."""
+    if e.rcvd is not None:
+        return f"closed:{e.rcvd.code}"
+    if e.sent is not None:
+        return f"closed:local_{e.sent.code}"
+    return "closed:nocode"
+
 FrameHandler = Callable[[bytes | str, int, "WsConnection"], None]
 StateHandler = Callable[["WsConnection", str, dict[str, Any]], None]
 
@@ -347,7 +357,7 @@ class WsConnection:
                         return "stopped"
                     if self._close_reason:
                         return self._close_reason
-                    return f"closed:{e.rcvd.code if e.rcvd else 'nocode'}"
+                    return close_reason(e)
                 self._deliver(raw)
                 if self._rotate_due:
                     self._rotate_due = False
