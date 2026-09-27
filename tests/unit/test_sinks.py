@@ -143,3 +143,13 @@ def test_bad_row_does_not_kill_writer(tmp_path):
     sm.close()
     assert sm.stats.datasets["kline_1m"].write_errors == 2
     assert sm.stats.datasets["kline_1m"].rows_written == 1
+
+
+def test_manifest_appends_from_processes_are_not_lost(tmp_path):
+    import subprocess
+    import sys
+    code = ("import sys; from pathlib import Path; from jevbot.recorder.integrity import append_manifest\n"
+            "for i in range(200): append_manifest(Path(sys.argv[1]), {'file': f'{sys.argv[2]}-{i}', 'rows': i})\n")
+    procs = [subprocess.Popen([sys.executable, "-c", code, str(tmp_path), f"p{k}"]) for k in range(4)]
+    assert all(p.wait(120) == 0 for p in procs)
+    assert len(read_manifest(tmp_path)) == 800

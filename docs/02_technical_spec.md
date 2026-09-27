@@ -147,6 +147,13 @@ Kurallar:
 
 **Tier-2 seçimi:** her 5m tick'te `prescore` (rvol_z, |resid_ret_1h_atr|, |funding_xs_z| rank ortalaması) top 30 + açık pozisyonlar. Değişiklik ≤ 10 sembol/tick (subscribe rate limit). Yeni subscribe edilen sembolün depth feature'ı ilk 10 s `NaN` → o tick'te microstructure gerektiren kontroller "unknown" = fail-safe (ineligible).
 
+**Home-PC kapsamı (2026-09-27, Gate 2 kararı):** 1 saatlik gerçek Binance gate'i `config/home.yaml` ile geçti:
+200 sembol kline/mark/OI, **bookTicker yalnızca hacme göre ilk 50 sembol**, depth 12 sembol, WS permessage-deflate.
+Sonuç: microstructure feature'ları (`spread_bps`, `book_imb_10bps`, `microprice_dev_bps`, depth) yalnızca bu 50 sembolde
+vardır. Scanner eligibility spread/depth gerektirdiği için **trade edilebilir evren = bookTicker kapsamındaki sembollerdir
+(50)**; diğer 150 sembol yalnızca market context (breadth, cross-sectional momentum, funding z-score) için kullanılır.
+200 sembol top-of-book kapsamı doğrulanmış **değildir**.
+
 ### 3.2 REST pollers
 
 | Endpoint | Periyot | Not |

@@ -75,10 +75,48 @@ def fsync_path(path: Path) -> None:
         os.fsync(fh.fileno())
 
 
+class _FileLock:
+    """Cross-process exclusive lock on a sidecar lock file (fcntl on POSIX, msvcrt on Windows)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.fh: Any = None
+
+    def __enter__(self) -> "_FileLock":
+        self.fh = open(self.path, "a+b")
+        if os.name == "nt":
+            import msvcrt
+            import time
+            self.fh.seek(0)
+            for _ in range(600):                   # LK_LOCK itself retries ~10 s; keep trying up to minutes
+                try:
+                    msvcrt.locking(self.fh.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+        else:
+            import fcntl
+            fcntl.flock(self.fh.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self.fh.seek(0)
+                msvcrt.locking(self.fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.fh.close()
+
+
 def append_manifest(dataset_dir: Path, entry: dict[str, Any]) -> None:
-    # Historical conversion publishes jobs from worker threads. On Windows,
-    # concurrent append-mode handles can overwrite each other's lines.
-    with _MANIFEST_APPEND_LOCK:
+    # Writers: sink/downloader worker threads (thread lock) and separate processes such as the
+    # recorder and `jevbot compact` on the same dataset (file lock). On Windows concurrent
+    # append-mode handles can overwrite each other's lines.
+    with _MANIFEST_APPEND_LOCK, _FileLock(dataset_dir / "_manifest.lock"):
         with open(dataset_dir / "_manifest.jsonl", "ab") as fh:
             fh.write(orjson.dumps(entry) + b"\n")
             fh.flush()
