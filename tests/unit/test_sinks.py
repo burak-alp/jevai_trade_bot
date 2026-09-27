@@ -1,7 +1,7 @@
 import pyarrow.parquet as pq
 
 from jevbot.core.config import SinkConfig
-from jevbot.recorder.integrity import quarantine_orphans, read_manifest, verify_tree
+from jevbot.recorder.integrity import quarantine_orphans, read_manifest, read_sidecar, verify_tree, write_sidecar
 from jevbot.core.time import ms_to_date
 from jevbot.recorder.sinks import SinkManager
 
@@ -10,6 +10,14 @@ ROW = ("BTCUSDT", 0, 59_999, 1.0, 2.0, 0.5, 1.5, 10.0, 15.0, 7, 6.0, 9.0, 60_000
 
 W = 60_000                                      # rotate_s=60 in these tests
 BASE = 1_800_000_000_000 - 1_800_000_000_000 % W
+
+
+def test_unicode_filename_sidecar(tmp_path):
+    file = tmp_path / "龙虾USDT.parquet"
+    file.write_bytes(b"sample")
+    side = write_sidecar(file, "abc123")
+    assert read_sidecar(file) == "abc123"
+    assert "龙虾USDT.parquet" in side.read_text(encoding="utf-8")
 
 
 def kl(open_time, source="ws"):
