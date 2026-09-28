@@ -124,9 +124,10 @@ class SymbolFeatures:
     start: int
     n_ticks: int
     f: dict[str, np.ndarray] = field(default_factory=dict)
+    tick_min: int = 5                                  # decision cadence (5 m fast families, 60 m slow)
 
     def tick_time(self, j: np.ndarray | int) -> np.ndarray | int:
-        return self.start + (5 * np.asarray(j) + 5) * MIN
+        return self.start + (self.tick_min * np.asarray(j) + self.tick_min) * MIN
 
 
 def compute_symbol_features(b: SymbolBars, funding: tuple[np.ndarray, np.ndarray] | None = None) -> SymbolFeatures:

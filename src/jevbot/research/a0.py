@@ -25,6 +25,7 @@ from jevbot.research.data import DAY, load_funding, load_symbol
 from jevbot.research.features import FEATURE_SCHEMA, add_market_context, compute_symbol_features
 from jevbot.research.labels import LABEL_VERSION, label_all
 from jevbot.research.scanner import ScannerConfig, scan
+from jevbot.research.slow import SLOW_SCHEMA, SlowConfig, add_btc_relative, compute_slow_features, scan_slow
 from jevbot.research.universe import pit_first_listing
 
 log = get_logger(__name__)
@@ -42,6 +43,8 @@ class A0Config:
     bootstrap: int = 2000
     seed: int = 7
     per_day: dict[str, list[str]] | None = None   # universe-pool: day -> that day's top-N (loads only these)
+    arm_kind: str = "fast"                  # "fast" = 5 m BRK/PB (scanner.py), "slow" = hourly slow.v1 families
+    slow: SlowConfig = field(default_factory=SlowConfig)
     chunk_days: int = 30                    # bounded memory: features/scan per time chunk
     warmup_days: int = 30                   # feature warm-up before each chunk (BTC vol state uses 30 d)
 
@@ -50,8 +53,9 @@ def _ms(d: date) -> int:
     return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def block_bootstrap_ci(values: np.ndarray, days: np.ndarray, n: int, seed: int) -> tuple[float, float]:
-    """95 % CI of the mean resampling whole days (labels overlap within a day)."""
+def block_bootstrap_ci(values: np.ndarray, days: np.ndarray, n: int, seed: int,
+                       level: float = 0.95) -> tuple[float, float]:
+    """``level`` CI of the mean resampling whole days (labels overlap within a day)."""
     if len(values) < 2:
         return float("nan"), float("nan")
     uniq, inv = np.unique(days, return_inverse=True)
@@ -60,7 +64,8 @@ def block_bootstrap_ci(values: np.ndarray, days: np.ndarray, n: int, seed: int) 
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, len(uniq), size=(n, len(uniq)))
     means = sums[idx].sum(axis=1) / np.maximum(cnts[idx].sum(axis=1), 1)
-    return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
+    a = (1 - level) / 2 * 100
+    return float(np.percentile(means, a)), float(np.percentile(means, 100 - a))
 
 
 def group_stats(rows: list[dict[str, Any]], cfg: A0Config) -> dict[str, Any]:
@@ -70,6 +75,7 @@ def group_stats(rows: list[dict[str, Any]], cfg: A0Config) -> dict[str, Any]:
     gross = np.array([r["gross_r"] for r in rows])
     days = np.array([r["t_decision"] // DAY for r in rows])
     lo, hi = block_bootstrap_ci(net, days, cfg.bootstrap, cfg.seed)
+    lo99, _ = block_bootstrap_ci(net, days, cfg.bootstrap, cfg.seed, level=0.99)
     glo, ghi = block_bootstrap_ci(gross, days, cfg.bootstrap, cfg.seed)
     exits = defaultdict(int)
     for r in rows:
@@ -79,6 +85,7 @@ def group_stats(rows: list[dict[str, Any]], cfg: A0Config) -> dict[str, Any]:
         "tp_rate": round(float(np.mean([r["y_success"] for r in rows])), 4),
         "mean_gross_r": round(float(gross.mean()), 4), "gross_ci95": [round(glo, 4), round(ghi, 4)],
         "mean_net_r": round(float(net.mean()), 4), "net_ci95": [round(lo, 4), round(hi, 4)],
+        "net_ci99_lo": round(lo99, 4),
         "median_cost_r": round(float(np.median([r["cost_r"] for r in rows])), 4),
         "mean_fee_r": round(float(np.mean([r["fee_r"] for r in rows])), 4),
         "mean_funding_r": round(float(np.mean([r["funding_r"] for r in rows])), 4),
@@ -137,7 +144,8 @@ def _chunk_features(cfg: A0Config, syms: list[str], c0: int, c1: int,
                     listing: dict[str, int]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Features for [c0, c1) computed on [c0 - warmup, c1) and trimmed to the chunk's ticks."""
     w0 = c0 - cfg.warmup_days * DAY
-    k0 = (c0 - w0) // (5 * 60_000)
+    slow = cfg.arm_kind == "slow"
+    k0 = (c0 - w0) // ((60 if slow else 5) * 60_000)
     btc = "BTCUSDT"
     feats, fund = {}, {}
     order = [btc] + [s for s in syms if s != btc] if btc in syms else syms
@@ -148,12 +156,17 @@ def _chunk_features(cfg: A0Config, syms: list[str], c0: int, c1: int,
             continue
         b.listing_time = listing.get(s)                     # PIT listing date, not first minute in the window
         fund[s] = load_funding(cfg.hist_root, s)
+        if slow:
+            feats[s] = compute_slow_features(b, fund[s])
+            continue
         sf = compute_symbol_features(b, fund[s])
         if s == btc:
             btc_sf = sf
         pair = {btc: btc_sf, s: sf} if btc_sf is not None else {s: sf}
         add_market_context(pair)
         feats[s] = sf
+    if slow:
+        add_btc_relative(feats)
     for sf in feats.values():                               # trim warm-up ticks
         sf.f = {k: v[k0:] for k, v in sf.f.items()}
         sf.start, sf.n_ticks = c0, sf.n_ticks - k0
@@ -181,14 +194,15 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
         chunks += 1
         loaded.update(feats)
         ever.update(_universe_stats(feats, cfg.tradable_top)["ever"])
-        cp = scan(feats, cfg.scanner, tradable_top=cfg.tradable_top)
+        cp = (scan_slow(feats, cfg.slow, cfg.tradable_top) if cfg.arm_kind == "slow"
+              else scan(feats, cfg.scanner, tradable_top=cfg.tradable_top))
         del feats
         by_sym: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for p in cp:
             by_sym[p["symbol"]].append(p)
         for s, ps in by_sym.items():                        # labels: chunk bars + 1 day for open horizons
-            b = load_symbol(cfg.hist_root, s, c0, min(end, c1 + DAY))
-            label_all(ps, {s: b}, {s: fund.get(s)}, cfg.scanner.cost)
+            b = load_symbol(cfg.hist_root, s, c0, min(end, c1 + 3 * DAY))   # covers horizons up to 48 h
+            label_all(ps, {s: b}, {s: fund.get(s)}, cfg.slow.cost if cfg.arm_kind == "slow" else cfg.scanner.cost)
         props.extend(cp)
         log.info("a0_chunk_done", start=c0, symbols=len(syms), proposals=len(cp))
     universe = {"mode": "pit_daily", "top": cfg.tradable_top, "pool": len(loaded), "ever_tradable": len(ever),
@@ -199,7 +213,7 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
     labelled = [p for p in props if p.get("exit_type") in ("TP", "SL", "TIME")]
     sel = [p for p in labelled if p.get("selected")]
     groups: dict[str, Any] = {"all": group_stats(labelled, cfg), "selected": group_stats(sel, cfg)}
-    for fam in ("BRK", "PB"):
+    for fam in sorted({p["family"] for p in labelled}):
         groups[fam] = group_stats([p for p in labelled if p["family"] == fam], cfg)
         for side, nm in ((1, "long"), (-1, "short")):
             groups[f"{fam}_{nm}"] = group_stats([p for p in labelled if p["family"] == fam and p["side"] == side], cfg)
@@ -211,11 +225,13 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
     except OSError:
         sha = ""
     summary = {
-        "arm": "A0", "git_sha": sha, "feature_schema": FEATURE_SCHEMA, "label_version": LABEL_VERSION,
+        "arm": "A0-slow" if cfg.arm_kind == "slow" else "A0", "git_sha": sha,
+        "feature_schema": SLOW_SCHEMA if cfg.arm_kind == "slow" else FEATURE_SCHEMA, "label_version": LABEL_VERSION,
         "period": [str(cfg.start), str(cfg.end)], "symbols_loaded": len(loaded), "universe": universe,
         "proposals": len(props), "labelled": len(labelled),
         "data_gaps": sum(1 for p in props if p.get("exit_type") == "data_gap"),
-        "groups": groups, "portfolio": port, "scanner_config": cfg.scanner.to_dict(),
+        "groups": groups, "portfolio": port,
+        "scanner_config": cfg.slow.to_dict() if cfg.arm_kind == "slow" else cfg.scanner.to_dict(),
         "runtime_s": round(time.time() - t0, 1),
     }
     g = groups["all"]
@@ -223,6 +239,9 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
         "gross_edge": g.get("n", 0) > 0 and g["gross_ci95"][0] > 0,
         "net_edge": g.get("n", 0) > 0 and g["net_ci95"][0] > 0,
         "note": "decision-level, day-block bootstrap 95 % CI of the mean; 'edge' = CI lower bound > 0",
+        # pre-registered per family x side (slow.v1): net 99 % CI lower bound > 0 with n >= 30
+        "pass_99": sorted(k for k, v in groups.items() if k.split("_")[0] in {p["family"] for p in labelled}
+                          and k.count("_") == 1 and v.get("n", 0) >= 30 and v["net_ci99_lo"] > 0),
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     if props:
@@ -241,15 +260,16 @@ def to_markdown(s: dict[str, Any]) -> str:
          f"({s['universe']['ever_tradable']} ever tradable) · proposals {s['proposals']} · "
          f"labelled {s['labelled']} · data gaps {s['data_gaps']} · runtime {s['runtime_s']} s", "",
          f"**Verdict:** gross edge {'YES' if v['gross_edge'] else 'NO'} · net edge {'YES' if v['net_edge'] else 'NO'} "
-         f"({v['note']})", "",
-         "| group | n | days | TP rate | mean gross R [95% CI] | mean net R [95% CI] | median cost R | win (net) | "
-         "MAE / MFE R | exits |", "|" + "---|" * 10]
+         f"({v['note']}) · family x side passing net 99 % lower > 0: {v.get('pass_99') or 'none'}", "",
+         "| group | n | days | TP rate | mean gross R [95% CI] | mean net R [95% CI] | net 99% lo | median cost R | "
+         "win (net) | MAE / MFE R | exits |", "|" + "---|" * 11]
     for k, g in s["groups"].items():
         if not g.get("n"):
-            L.append(f"| {k} | 0 | | | | | | | | |")
+            L.append(f"| {k} | 0 | | | | | | | | | |")
             continue
         L.append(f"| {k} | {g['n']} | {g['days']} | {g['tp_rate']} | {g['mean_gross_r']} {g['gross_ci95']} | "
-                 f"{g['mean_net_r']} {g['net_ci95']} | {g['median_cost_r']} | {g['win_rate_net']} | "
+                 f"{g['mean_net_r']} {g['net_ci95']} | {g['net_ci99_lo']} | {g['median_cost_r']} | "
+                 f"{g['win_rate_net']} | "
                  f"{g['mean_mae_r']} / {g['mean_mfe_r']} | {g['exit_types']} |")
     p = s["portfolio"]
     L += ["", "## Portfolio (selected, max positions, 1 R per trade)", "",
