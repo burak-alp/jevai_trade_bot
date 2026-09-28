@@ -27,7 +27,7 @@ def _fake_jev(calls):
     def handler(req: httpx.Request) -> httpx.Response:
         if req.url.path == "/v1/models":
             return httpx.Response(200, json={"models": [{"name": "jev-latest", "description": "", "release_date": "2026-09-15"},
-                                                        {"name": "jev-2026-09-15", "description": "", "release_date": "2026-09-15"}]})
+                                                        {"name": "jev-1.13.0", "description": "", "release_date": "2026-09-15"}]})
         assert req.headers["authorization"] == "Bearer test-key"
         body = json.loads(req.content)
         calls.append(body)
@@ -39,7 +39,7 @@ def _fake_jev(calls):
                 up = 0.6 if body["state"]["asset"].get("ret_24h_atr_1h", 0) > 0 else 0.2
                 ans[name] = {"type": "choice", "choice": "up", "confidence": 0.5,
                              "probabilities": {"up": up, "flat": 0.2, "down": 0.8 - up}}
-        return httpx.Response(200, json={"model": "jev-2026-09-15", "answers": ans,
+        return httpx.Response(200, json={"model": "jev-1.13.0", "answers": ans,
                                          "usage": {"input_tokens": 300, "output_tokens": 5}})
     return httpx.MockTransport(handler)
 
@@ -69,9 +69,12 @@ def test_questions_and_answer_validation():
     assert parse_answers(q, {"answers": {"trade_success": {"noul": 1.2}}})[1]
     bad_sum = {"answers": {**ok["answers"], "direction_h": {"probabilities": {"up": 0.9, "flat": 0.3, "down": 0.2}}}}
     assert parse_answers(q, bad_sum)[1].startswith("choice sum")
-    assert pick_model([{"name": "jev-latest"}, {"name": "jev-2026-09-15", "release_date": "2026-09-15"}]) == \
-        ("jev-2026-09-15", "versioned")
-    assert pick_model([{"name": "jev-latest"}]) == ("jev-latest", "alias_only")
+    live = [{"name": n} for n in ("laya-english", "laya-multilingual", "jev-latest", "jev-preview", "jev-1.13.0",
+                                  "jev-1.9.2")]                 # the account's real listing + an older pin
+    assert pick_model(live) == ("jev-1.13.0", "versioned")
+    assert pick_model([{"name": "laya-english"}, {"name": "jev-preview"}, {"name": "jev-latest"}]) == \
+        ("jev-latest", "alias_only")
+    assert pick_model([{"name": "laya-english"}]) == (None, "none")
 
 
 def test_client_errors_breaker_and_budget():
@@ -118,7 +121,7 @@ def test_shadow_on_paper_engine_end_to_end(tmp_path):
     ticks = [START + d * DAY for d in range(13, DAYS - 2)] + [START + 12 * DAY + h * HOUR for h in range(1, 12)]
 
     async def go():
-        assert await shadow.start(START) == "jev-2026-09-15"
+        assert await shadow.start(START) == "jev-1.13.0"
         got = []
         for t in sorted(ticks):
             now["t"] = t + 30_000
@@ -139,7 +142,7 @@ def test_shadow_on_paper_engine_end_to_end(tmp_path):
     assert len(judg) == len(asks) == len(calls) and all(r["status"] == "ok" for r in judg)
     for a in asks:                                            # asked (and written) before the answer
         assert kinds.index("ask") < kinds.index("judgment")
-        assert "symbol" not in json.dumps(a["state"]) and a["model_requested"] == "jev-2026-09-15"
+        assert "symbol" not in json.dumps(a["state"]) and a["model_requested"] == "jev-1.13.0"
     assert all(r["late"] is False for r in judg if r["question"] == "trade_success")
     opens = [r for r in led if r["kind"] == "dir_open"]
     panel = [r for r in opens if r["source"] in ("panel", "both")]
@@ -149,7 +152,7 @@ def test_shadow_on_paper_engine_end_to_end(tmp_path):
     assert all(r["y"] in ("up", "flat", "down") for r in outs if r["status"] == "ok")
 
     rep = jev_report(cfg.state_dir)
-    assert rep["models_returned"] == ["jev-2026-09-15"] and rep["tokens"]["input"] == 300 * len(judg)
+    assert rep["models_returned"] == ["jev-1.13.0"] and rep["tokens"]["input"] == 300 * len(judg)
     b, c = rep["arm_B_trade_success"], rep["arm_C_direction"]
     assert b["n"] > 0 and 0.0 <= b["mean_p"] <= 1.0
     assert c["n"] > 0 and set(c["base_rates"]) == {"up", "flat", "down"}

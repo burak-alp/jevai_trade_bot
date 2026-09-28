@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import time
 from typing import Any, Callable
@@ -37,14 +38,15 @@ def load_api_key(var: str = "JEV_API_KEY") -> str | None:
         return None
 
 
-def pick_model(models: list[dict[str, Any]]) -> tuple[str | None, str]:
-    """Prefer a dated, non-alias model (newest release); else an alias. Returns (name, pinning)."""
-    named = [m for m in models if m.get("name")]
-    pinned = [m for m in named if "latest" not in m["name"]]
+def pick_model(models: list[dict[str, Any]], family: str = "jev") -> tuple[str | None, str]:
+    """Only ``<family>-*`` models (the account also lists other products). Prefer the highest pinned
+    version ``jev-X.Y.Z``; else the ``jev-latest`` alias (never ``preview``). Returns (name, pinning)."""
+    names = [str(m["name"]) for m in models if str(m.get("name", "")).startswith(f"{family}-")]
+    pinned = [n for n in names if re.fullmatch(rf"{family}-\d+(\.\d+)*", n)]
     if pinned:
-        return max(pinned, key=lambda m: (m.get("release_date", ""), m["name"]))["name"], "versioned"
-    if named:
-        return named[0]["name"], "alias_only"
+        return max(pinned, key=lambda n: tuple(int(x) for x in n.split("-", 1)[1].split("."))), "versioned"
+    if f"{family}-latest" in names:
+        return f"{family}-latest", "alias_only"
     return None, "none"
 
 
