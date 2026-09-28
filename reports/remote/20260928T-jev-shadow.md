@@ -17,6 +17,15 @@ Jev hiçbir kararı, zamanlamayı, boyutu değiştirmez; cevaplar ayrı defterde
   1h kapanışla yerleşir. Tahmini yük ≈ 210 çağrı/gün.
 - CLI: `jevbot jev-check`, `jevbot paper --jev-shadow`, `jevbot jev-report`. 125 test geçti.
 
+## Güncelleme 13:50 UTC — uç nokta ve model (kullanıcı doğruladı)
+- Kullanıcının key'i bir Jev AI key'i: base URL **`https://jev-ai.pro/api`** (TypeSafe uyumlu). `api.typesafe.ai`
+  bu key'e 401 verir. Her komutta `--jev-base-url https://jev-ai.pro/api` ver (kod varsayılanı değişmedi).
+- `/v1/models`: laya-english, laya-multilingual, jev-latest, jev-preview, jev-1.13.0 → seçilen **jev-1.13.0
+  (versioned)**; `model_returned` aynı. Örnek çağrı: 452 ms, 797 girdi / 56 çıktı token, olasılıklar 0.01 adımlı.
+- Kullanıcı `jevbot paper --state-dir run/paper-jev --jev-shadow --jev-base-url https://jev-ai.pro/api`'yi kendi
+  terminalinde başlattı (config `314c11b6a1e1727b`). **İkinci bir örnek başlatma** (aynı ledger'a iki yazar).
+  Görev Zamanlayıcı'ya taşıyacaksan önce kullanıcının terminalindekini durdurt.
+
 ## Senden (sırayla)
 1. Kullanıcı `JEV_API_KEY`'i kendi terminalinde `setx` ile tanımlar. Sen key'i hiçbir dosyaya/rapora yazma.
 2. `git pull; jevbot jev-check` → model listesi, `pinning`, gecikme, status. Rapor et (key yok).
