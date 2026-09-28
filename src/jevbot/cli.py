@@ -210,9 +210,14 @@ def cmd_jev_check(args: argparse.Namespace) -> int:
     async def main() -> int:
         jev = JevClient(base_url=args.jev_base_url, timeout_s=30.0)
         try:
-            models = await jev.models()
-            model, pinning = pick_model(models)
-            sys.stdout.write(f"models: {[m.get('name') for m in models]} -> {model} ({pinning})\n")
+            try:
+                models = await jev.models()
+                model, pinning = pick_model(models)
+                sys.stdout.write(f"models: {[m.get('name') for m in models]} -> {model} ({pinning})\n")
+            except Exception as e:                          # noqa: BLE001 - report and still try the judgment
+                model = None
+                sys.stdout.write(f"models: FAILED {type(e).__name__}: {str(e).splitlines()[0][:160]} "
+                                 f"-> trying jev-latest\n")
             p = {"family": "TSM", "side": 1, "atr_pct": 0.006, "entry_ref": 100.0, "stop_dist": 1.8,
                  "stop_dist_bps": 180.0, "r_tp": 3.0, "horizon_min": 2880, "cost_r": 0.04, "ret_24h": 0.03,
                  "ret_7d": 0.08, "rel_ret_7d": 0.05, "run_4h_atr": 1.2, "ema_trend": 1.0, "funding_bps_8h": 1.0,
