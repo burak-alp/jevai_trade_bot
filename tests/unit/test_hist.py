@@ -167,3 +167,19 @@ async def test_transient_windows_file_locks_do_not_stop_download(tmp_path, monke
     st = await bv.download("klines", ["BTCUSDT", "ETHUSDT"], date(2024, 1, 1), date(2024, 1, 1), interval="1m")
     await bv.aclose()
     assert (st.ok, st.failed) == (2, 0) and fails["replace"] == 0
+
+
+def test_iter_jobs_pit_days_filter(tmp_path):
+    from datetime import date
+
+    from jevbot.cli import pit_pool_days
+    pool = {"pool": ["AUSDT", "BUSDT"], "per_day": {"2025-03-10": ["AUSDT"], "2025-03-12": ["AUSDT", "BUSDT"]}}
+    days = pit_pool_days(pool, 2)
+    assert days == {"AUSDT": {"2025-03-08", "2025-03-09", "2025-03-10", "2025-03-11", "2025-03-12"},
+                    "BUSDT": {"2025-03-10", "2025-03-11", "2025-03-12"}}
+    assert pit_pool_days({"pool": ["AUSDT"]}, 2) is None
+    bv = BinanceVision(HistConfig(), tmp_path, transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+    jobs = list(bv.iter_jobs("metrics", ["AUSDT", "BUSDT"], date(2025, 3, 1), date(2025, 3, 31), None, "daily", days))
+    got = {(j.symbol, j.period) for j in jobs}
+    assert got == {(s, d) for s, ds in days.items() for d in ds}
+    assert len(list(bv.iter_jobs("metrics", ["AUSDT"], date(2025, 3, 1), date(2025, 3, 31), None, "daily"))) == 31

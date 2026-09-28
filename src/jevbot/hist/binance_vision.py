@@ -441,7 +441,8 @@ class BinanceVision:
             return {"status": "suspect", "issues": [f"suspect:validator_error:{e!r}"], "checks": {}}
 
     def iter_jobs(self, dataset: str, symbols: list[str], start: date, end: date, interval: str | None,
-                  granularity: str):
+                  granularity: str, days: dict[str, set[str]] | None = None):
+        """``days`` (daily granularity only): per symbol, the only ISO days to fetch (e.g. the PIT pool days)."""
         spec = DATASETS[dataset]
         if granularity == "daily" and not spec.daily:
             granularity = "monthly"
@@ -451,21 +452,24 @@ class BinanceVision:
             n = (end - start).days + 1
             for sym in symbols:
                 for i in range(n):
-                    yield Job(spec, sym, (start + timedelta(days=i)).isoformat(), granularity, interval)
+                    d = (start + timedelta(days=i)).isoformat()
+                    if days is None or d in days.get(sym, ()):
+                        yield Job(spec, sym, d, granularity, interval)
         else:
             for sym in symbols:
                 for m in months(start, end):
                     yield Job(spec, sym, m, granularity, interval)
 
     async def download(self, dataset: str, symbols: list[str], start: date, end: date, *,
-                       interval: str | None = None, granularity: str = "daily", force: bool = False) -> DownloadStats:
+                       interval: str | None = None, granularity: str = "daily", force: bool = False,
+                       days: dict[str, set[str]] | None = None) -> DownloadStats:
         """Bounded producer/consumer: at most ``concurrency`` jobs in flight and ``2*concurrency`` queued."""
         stats = DownloadStats()
         n = max(1, self.cfg.concurrency)
         q: asyncio.Queue[Job | None] = asyncio.Queue(maxsize=2 * n)
 
         async def producer() -> None:
-            for job in self.iter_jobs(dataset, symbols, start, end, interval, granularity):
+            for job in self.iter_jobs(dataset, symbols, start, end, interval, granularity, days):
                 await q.put(job)
                 stats.jobs += 1
             for _ in range(n):

@@ -40,8 +40,8 @@ if ((Step "pytest" { python -m pytest -q }) -ne 0) { Write-Host "TESTS FAILED ->
 
 # ---- part 1: pos.v1 on the development window (+ 180 d secondary) ----
 if (-not $SkipDownload) {
-  if ((Retry "dl-metrics-dev" { jevbot download --dataset metrics --symbols "@$poolDev" --granularity daily --start 2025-01-01 --end 2026-03-31 @set }) -ne 0) { exit 3 }
-  if ((Retry "dl-metrics-180d" { jevbot download --dataset metrics --symbols "@$pool180" --granularity daily --start 2026-03-01 --end 2026-09-27 @set }) -ne 0) { exit 3 }
+  if ((Retry "dl-metrics-dev" { jevbot download --dataset metrics --symbols "@$poolDev" --pit-days 2 --granularity daily --start 2025-01-01 --end 2026-03-31 @set }) -ne 0) { exit 3 }
+  if ((Retry "dl-metrics-180d" { jevbot download --dataset metrics --symbols "@$pool180" --pit-days 2 --granularity daily --start 2026-03-01 --end 2026-09-27 @set }) -ne 0) { exit 3 }
 }
 if ((Step "verify-1" { jevbot verify --root $hist }) -ne 0) { Write-Host "VERIFY FAILED -> $out"; exit 5 }
 A0 "pos" "dev" "2025-03-01" "2026-03-31" $poolDev

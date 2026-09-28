@@ -287,6 +287,22 @@ def cmd_compact(args: argparse.Namespace) -> int:
     return 0 if not any(v.skipped_unverified for v in res.values()) else 5
 
 
+def pit_pool_days(pool: dict, lookback: int) -> dict[str, set[str]] | None:
+    """Per symbol, the ISO days it is in the pool's daily top-N plus ``lookback`` days before each (features
+    at a day's ticks look back up to 24 h + 5 min, so 2 covers the 00:00 tick). None without per_day."""
+    from datetime import date, timedelta
+
+    per_day = pool.get("per_day")
+    if not per_day:
+        return None
+    out: dict[str, set[str]] = {}
+    for d, syms in per_day.items():
+        d0 = date.fromisoformat(d)
+        for s in syms:
+            out.setdefault(s, set()).update((d0 - timedelta(days=k)).isoformat() for k in range(lookback + 1))
+    return out
+
+
 def cmd_download(args: argparse.Namespace) -> int:
     from datetime import date
     from pathlib import Path
@@ -310,15 +326,22 @@ def cmd_download(args: argparse.Namespace) -> int:
             if not (args.start and args.end and args.symbols):
                 sys.stderr.write("--symbols, --start and --end are required\n")
                 return 2
+            days = None
             if args.symbols == "ALL":
                 symbols = await bv.list_symbols(args.dataset, args.granularity)
             elif args.symbols.startswith("@"):       # universe-pool JSON
-                symbols = list(orjson.loads(Path(args.symbols[1:]).read_bytes())["pool"])
+                pool = orjson.loads(Path(args.symbols[1:]).read_bytes())
+                symbols = list(pool["pool"])
+                if args.pit_days:
+                    days = pit_pool_days(pool, args.pit_days)
             else:
                 symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+            if args.pit_days and days is None:
+                sys.stderr.write("--pit-days needs --symbols @pool.json with per_day\n")
+                return 2
             stats = await bv.download(args.dataset, symbols, date.fromisoformat(args.start),
                                       date.fromisoformat(args.end), interval=args.interval,
-                                      granularity=args.granularity, force=args.force)
+                                      granularity=args.granularity, force=args.force, days=days)
             sys.stdout.write(orjson.dumps(stats.__dict__, option=orjson.OPT_INDENT_2).decode() + "\n")
             return 0 if stats.failed == 0 else 6
         finally:
@@ -463,6 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--granularity", choices=["daily", "monthly"], default="daily")
     p.add_argument("--out", default=None, help="output root (default: <data_dir>/hist/um)")
     p.add_argument("--force", action="store_true", help="re-download files that already exist")
+    p.add_argument("--pit-days", type=int, default=0, metavar="N",
+                   help="daily datasets with --symbols @pool.json: only days a symbol is in the pool's daily "
+                        "top-N, plus N days before each (metrics for pos.v1: 2)")
     p.set_defaults(func=cmd_download)
 
     p = sub.add_parser("loadtest", help="burst load test: multi-process fake exchange -> recorder -> analysis")
