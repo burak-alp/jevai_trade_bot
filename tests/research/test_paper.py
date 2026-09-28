@@ -113,8 +113,8 @@ def test_rest_source_parses_binance_payloads():
                 for s, st in (("BTCUSDT", "TRADING"), ("AUSDT", "TRADING"), ("USDCUSDT", "TRADING"),
                               ("DEADUSDT", "SETTLING"))]})
         if p == "/fapi/v1/ticker/24hr":
-            return httpx.Response(200, json=[{"symbol": s, "quoteVolume": v} for s, v in
-                                             (("AUSDT", "9e9"), ("BTCUSDT", "5e9"), ("USDCUSDT", "8e9"), ("DEADUSDT", "1e10"))])
+            vols = (("AUSDT", "9e9"), ("BTCUSDT", "5e9"), ("USDCUSDT", "8e9"), ("DEADUSDT", "1e10"))
+            return httpx.Response(200, json=[{"symbol": s, "quoteVolume": v} for s, v in vols])
         if p == "/fapi/v1/klines":
             step = HOUR if q["interval"] == "1h" else MIN
             return httpx.Response(200, json=[kl(t0 + i * step, step, 100 + i) for i in (0, 2)])  # gap at 1
