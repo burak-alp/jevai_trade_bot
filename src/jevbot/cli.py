@@ -138,6 +138,21 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_research_a1(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.research.a1 import A1Config, a1_report, load_proposals, to_markdown, walk_forward
+
+    cfg = A1Config()
+    rep = a1_report(walk_forward(load_proposals([Path(r) for r in args.runs]), cfg), cfg)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "summary.json").write_bytes(orjson.dumps(rep, option=orjson.OPT_INDENT_2))
+    (out / "summary.md").write_text(to_markdown(rep), encoding="utf-8")
+    sys.stdout.write(to_markdown(rep) + f"\noutput: {out}\n")
+    return 0
+
+
 def cmd_research_drift(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -421,6 +436,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "pos = hourly CROWD/FLUSH on 5 m open interest (pos.v1; needs the metrics dataset)")
     p.add_argument("--out", default=None, help="output dir (default: <data_dir>/research/a0-<ts>)")
     p.set_defaults(func=cmd_research_a0)
+
+    p = sub.add_parser("research-a1", help="Arm A1: purged monthly walk-forward ML meta-labeler on A0 proposals")
+    p.add_argument("--runs", nargs="+", required=True, help="research-a0 output dirs (proposals.parquet)")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_research_a1)
 
     p = sub.add_parser("research-drift", help="signal decay: gross forward R of A0 proposals at 15 m .. 48 h")
     _add_common(p)
