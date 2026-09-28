@@ -46,8 +46,12 @@ $runs = @(
 )
 foreach ($r in $runs) {
   $dir = "data/research/slow-$($r[0])"
-  Step "a0-$($r[0])" { jevbot research-a0 --arm slow --symbols "@$($r[3])" --start $r[1] --end $r[2] --out $dir } | Out-Null
-  Copy-Item "$dir/summary.md" "$out/$($r[0])-summary.md" -ErrorAction SilentlyContinue
+  $c = Step "a0-$($r[0])" { jevbot research-a0 --arm slow --symbols "@$($r[3])" --start $r[1] --end $r[2] --out $dir }
+  if ($c -ne 0 -or -not (Test-Path "$dir/summary.md")) {
+    Write-Host "A0 $($r[0]) FAILED -> $out"
+    exit 6
+  }
+  Copy-Item "$dir/summary.md" "$out/$($r[0])-summary.md" -ErrorAction Stop
 }
 Get-Content "$out/steps.txt"
 Write-Host "done -> $out (commit only the md files; proposals.parquet stays local)"
