@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import math
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,35 @@ def _read(raw: Path, dataset: str, since: int | None, until: int | None, columns
     return pa.concat_tables([pq.read_table(p, columns=columns) for p in files], promote_options="default")
 
 
+def _kline_completeness(kl: list[dict[str, Any]], uni: list[dict[str, Any]]) -> dict[str, Any]:
+    per_minute = defaultdict(set)
+    for r in kl:
+        per_minute[r["open_time"]].add(r["symbol"])
+    snapshots = defaultdict(set)
+    for u in uni:
+        if u["in_universe"]:
+            snapshots[u["t_asof"]].add(u["symbol"])
+    snapshot_times = sorted(snapshots)
+    missing = 0
+    active_symbols = set()
+    incomplete_symbols = set()
+    if per_minute and snapshot_times:
+        # Klines for a minute arrive at its close, so membership refreshed during
+        # that minute applies to its closing kline.
+        for minute in range(min(per_minute), max(per_minute) + MINUTE_MS, MINUTE_MS):
+            pos = bisect_right(snapshot_times, minute + MINUTE_MS - 1) - 1
+            members = snapshots[snapshot_times[max(pos, 0)]]
+            absent = members - per_minute[minute]
+            missing += len(absent)
+            active_symbols.update(members)
+            incomplete_symbols.update(absent)
+    return {"minutes": (max(per_minute) - min(per_minute)) // MINUTE_MS + 1 if per_minute else 0,
+            "symbols": len({r["symbol"] for r in kl}),
+            "symbols_complete": len(active_symbols - incomplete_symbols),
+            "sources": dict(Counter(r["source"] for r in kl)), "cells_missing": missing,
+            "membership_available": bool(snapshot_times and active_symbols)}
+
+
 def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until: int | None = None) -> dict[str, Any]:
     raw = Path(data_dir) / "raw"
     rep: dict[str, Any] = {}
@@ -71,7 +101,8 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
     rep["status_counts"] = dict(Counter(h["status"] for h in health))
     rep["degraded_details"] = dict(Counter(h["detail"] for h in health if h["detail"]).most_common(10))
     last = live[-1] if live else health[-1]
-    uni = _read(raw, "universe", since, until, ["t_asof", "symbol", "in_universe"]).to_pylist()
+    # Include the latest snapshot before a sliced window: it defines membership at its start.
+    uni = _read(raw, "universe", None, until, ["t_asof", "symbol", "in_universe"]).to_pylist()
     last_asof = max((u["t_asof"] for u in uni), default=None)
     rep["universe"] = {"symbols_recorded": last["symbols_universe"],
                        "in_universe_last_snapshot": sum(1 for u in uni if u["t_asof"] == last_asof and u["in_universe"]),
@@ -176,15 +207,7 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
                    "kline_gaps_unfilled": sum(1 for g in gaps if g["kind"].startswith("kline") and not g["backfilled"]),
                    "kline_minutes_missing_before_backfill": sum(g["n_missing"] for g in gaps if g["kind"].startswith("kline"))}
     kl = _read(raw, "kline_1m", since, until, ["symbol", "open_time", "source"]).to_pylist()
-    per_sym = defaultdict(set)
-    for r in kl:
-        per_sym[r["symbol"]].add(r["open_time"])
-    minutes = sorted({r["open_time"] for r in kl})
-    exp = len(minutes)
-    complete = sum(1 for s in per_sym if len(per_sym[s]) >= exp)
-    rep["kline_completeness"] = {"minutes": exp, "symbols": len(per_sym), "symbols_complete": complete,
-                                 "sources": dict(Counter(r["source"] for r in kl)),
-                                 "cells_missing": sum(exp - len(v) for v in per_sym.values())}
+    rep["kline_completeness"] = _kline_completeness(kl, uni)
     rep["rest"] = {"weight_used_1m": {"p50": _q([h["rest_weight_used"] for h in steady], 0.5),
                                       "p95": _q([h["rest_weight_used"] for h in steady], 0.95),
                                       "max": _q([h["rest_weight_used"] for h in steady], 1.0)},
@@ -222,7 +245,8 @@ def build_report(data_dir: Path, run_dir: Path, since: int | None = None, until:
         "integrity_ok": v.ok,
         "no_schema_errors": rep["errors"]["schema_errors"] == 0,
         "no_unhealthy": rep["status_counts"].get("UNHEALTHY", 0) == 0,
-        "kline_complete": rep["kline_completeness"]["cells_missing"] == 0,
+        "kline_complete": (rep["kline_completeness"]["membership_available"]
+                           and rep["kline_completeness"]["cells_missing"] == 0),
         "clock_offset_under_500ms": (rep["clock"]["offset_ms_max_abs"] or 0) < 500,
         # A single socket stalling on the network is detected and reconnected (stale_feed); the gate
         # fails on sustained or frequent staleness: >= 99 % of intervals p99 < 2 s and no stall > 30 s.
