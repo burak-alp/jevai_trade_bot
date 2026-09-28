@@ -112,6 +112,7 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
     from jevbot.core.time import now_ms
     from jevbot.recorder.integrity import read_manifest
     from jevbot.research.a0 import A0Config, run_a0, to_markdown
+    from jevbot.research.slow import SlowConfig, pos_config
 
     cfg = _load(args)
     hist = Path(args.hist) if args.hist else Path(cfg.data_dir) / "hist" / "um"
@@ -130,7 +131,8 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
     summary = run_a0(A0Config(hist_root=hist, symbols=symbols, start=date.fromisoformat(args.start),
                               end=date.fromisoformat(args.end), tradable_top=args.tradable_top,
                               max_positions=args.max_positions, per_day=per_day,
-                              chunk_days=args.chunk_days, arm_kind=args.arm), out)
+                              chunk_days=args.chunk_days, arm_kind=args.arm,
+                              slow=pos_config() if args.arm == "pos" else SlowConfig()), out)
     sys.stdout.write(to_markdown(summary))
     sys.stdout.write(f"\noutput: {out}\n")
     return 0
@@ -334,8 +336,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tradable-top", type=int, default=50, help="PIT tradable universe: daily top-N by trailing 24h quote volume")
     p.add_argument("--max-positions", type=int, default=3)
     p.add_argument("--chunk-days", type=int, default=30, help="time chunk (bounded memory; 30 d warm-up each)")
-    p.add_argument("--arm", choices=["fast", "slow"], default="fast",
-                   help="fast = 5 m BRK/PB (A0 2026-09); slow = hourly TSM/XSM/FUND (slow.v1, pre-registered)")
+    p.add_argument("--arm", choices=["fast", "slow", "pos"], default="fast",
+                   help="fast = 5 m BRK/PB (A0 2026-09); slow = hourly TSM/XSM/FUND (slow.v1); "
+                        "pos = hourly CROWD/FLUSH on 5 m open interest (pos.v1; needs the metrics dataset)")
     p.add_argument("--out", default=None, help="output dir (default: <data_dir>/research/a0-<ts>)")
     p.set_defaults(func=cmd_research_a0)
 

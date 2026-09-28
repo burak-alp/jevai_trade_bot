@@ -88,3 +88,23 @@ def load_funding(hist_root: Path, symbol: str) -> tuple[np.ndarray, np.ndarray]:
     t_all, r_all = t_all[order], r_all[order]
     keep = np.concatenate([[True], np.diff(t_all) > 0])
     return t_all[keep], r_all[keep]
+
+
+def load_open_interest(hist_root: Path, symbol: str) -> tuple[np.ndarray, np.ndarray]:
+    """5 m open interest from the ``metrics`` dataset: (create_time ms, sum_open_interest in contracts),
+    sorted and unique; non-positive values dropped; empty arrays if not downloaded."""
+    files = list_files(Path(hist_root) / "metrics", symbols={symbol})
+    ts, vs = [], []
+    for f in files:
+        t = pq.read_table(f, columns=["create_time", "sum_open_interest"])
+        ts.append(t.column("create_time").to_numpy())
+        vs.append(t.column("sum_open_interest").to_numpy(zero_copy_only=False).astype(np.float64))
+    if not ts:
+        return np.array([], dtype=np.int64), np.array([], dtype=np.float64)
+    t_all, v_all = np.concatenate(ts), np.concatenate(vs)
+    ok = np.isfinite(v_all) & (v_all > 0)
+    t_all, v_all = t_all[ok], v_all[ok]
+    order = np.argsort(t_all, kind="stable")
+    t_all, v_all = t_all[order], v_all[order]
+    keep = np.concatenate([[True], np.diff(t_all) > 0]) if len(t_all) else np.array([], dtype=bool)
+    return t_all[keep], v_all[keep]

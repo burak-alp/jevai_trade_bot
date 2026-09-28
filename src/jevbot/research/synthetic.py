@@ -57,3 +57,15 @@ def make_symbol(root: Path, symbol: str, start: int, minutes: int, seed: int, ba
                    "last_funding_rate": np.full(len(ft), 0.0001)})
     _write(root, f"fundingRate/symbol={symbol}/{symbol}-fundingRate-all.parquet", fr, symbol, "all")
     return r
+
+
+def make_metrics(root: Path, symbol: str, create_time: np.ndarray, open_interest: np.ndarray) -> None:
+    """``metrics`` rows (5 m open interest); the ratio columns are constant placeholders."""
+    n = len(create_time)
+    one = np.ones(n)
+    t = pa.table({"create_time": np.asarray(create_time, dtype=np.int64), "symbol": [symbol] * n,
+                  "sum_open_interest": np.asarray(open_interest, dtype=np.float64),
+                  "sum_open_interest_value": np.asarray(open_interest, dtype=np.float64) * 100.0,
+                  "count_toptrader_long_short_ratio": one, "sum_toptrader_long_short_ratio": one,
+                  "count_long_short_ratio": one, "sum_taker_long_short_vol_ratio": one})
+    _write(root, f"metrics/symbol={symbol}/{symbol}-metrics-all.parquet", t, symbol, "all")
