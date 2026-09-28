@@ -107,3 +107,21 @@ def test_per_day_pool_and_pit_listing_age(tmp_path):
     s0 = [r for r in rows if r["symbol"] == "S0USDT"]
     assert s0 and all(r["listing_age_d"] > 300 for r in s0)                  # PIT date, not data start
     assert all(r["listing_age_d"] >= 14 for r in rows if r["symbol"] == "S2USDT")   # listed 01-10: gated
+
+
+def test_block_days_groups_calendar_weeks_and_widens_ci_under_overlap():
+    import numpy as np
+    from jevbot.research.a0 import _block_days, group_stats
+    cfg = A0Config(hist_root=None, symbols=[], start=D0, end=D0, bootstrap=2000)
+    slow = A0Config(hist_root=None, symbols=[], start=D0, end=D0, arm_kind="slow")
+    assert _block_days(cfg) == 1 and _block_days(slow) == 7
+    # overlapping multi-day outcomes: a slow regime shared by neighbouring days
+    rng = np.random.default_rng(0)
+    regime = np.repeat(rng.normal(0, 1.0, 20), 7)            # 140 days, level persists for a week
+    rows = [{"t_decision": d * 86_400_000 + k, "net_r": regime[d] + rng.normal(0, 0.3), "gross_r": 0.0,
+             "exit_type": "TIME", "y_success": 0, "cost_r": 0.0, "fee_r": 0.0, "funding_r": 0.0,
+             "mae_r": 0.0, "mfe_r": 0.0} for d in range(140) for k in range(3)]
+    w1 = np.diff(group_stats(rows, cfg)["net_ci95"])[0]
+    cfg7 = A0Config(hist_root=None, symbols=[], start=D0, end=D0, bootstrap=2000, ci_block_days=7)
+    w7 = np.diff(group_stats(rows, cfg7)["net_ci95"])[0]
+    assert w7 > 1.5 * w1                                     # day blocks understate uncertainty here

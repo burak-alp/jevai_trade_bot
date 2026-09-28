@@ -16,7 +16,7 @@ Kod: `src/jevbot/research/slow.py`, `jevbot research-a0 --arm slow`. Saatlik kar
 
 ## Koşu (6 h recorder koşusu bittikten sonra; geliştirme verisi indirilince)
 ```powershell
-git pull; python -m pytest -q                       # 107 test
+git pull; python -m pytest -q                       # 108 test
 jevbot research-a0 --arm slow --symbols @data/research/pool-dev.json --start 2025-03-01 --end 2026-03-31 --out data/research/slow-dev
 jevbot research-a0 --arm slow --symbols @data/research/pool-dev.json --start 2025-03-01 --end 2025-09-30 --out data/research/slow-dev-h1
 jevbot research-a0 --arm slow --symbols @data/research/pool-dev.json --start 2025-09-30 --end 2026-03-31 --out data/research/slow-dev-h2
@@ -25,6 +25,9 @@ Her aile için 180 günlük veride de (`--start 2026-03-31 --end 2026-09-27`, me
 çalıştırılır; bu yalnızca ikincil kontroldür. Üç + bir `summary.md`'yi rapora kopyala.
 
 ## Önceden kayıtlı karar (aile × yön, toplam 6 test; %99 CI çoklu testi hesaba katar)
+**Ek (GPT-6 itirazı, 20260928T082932Z, veri görülmeden kabul):** slow kolunda bootstrap bloğu **7 takvim günü**
+(`ci_block_days=7`, özet ve `summary.json → verdict.ci_block_days`'te yazar). 24–48 h işlemler komşu günleri
+örtüştürdüğü için günlük blok CI'yı daraltırdı. Eşikler ve n ≥ 30 değişmedi.
 - **GEÇER**: geliştirme koşusunda net %99 CI alt sınırı > 0 (`pass_99` listesi, n ≥ 30) **ve** her iki
   geliştirme yarısında net ortalama > 0.
 - Geçen aile/yön → 180 günde net ortalama > 0 (ikincil) → sonra A1 (ML) / B (Jev) tasarımı + kilitli paper.

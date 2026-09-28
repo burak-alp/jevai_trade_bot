@@ -45,6 +45,7 @@ class A0Config:
     per_day: dict[str, list[str]] | None = None   # universe-pool: day -> that day's top-N (loads only these)
     arm_kind: str = "fast"                  # "fast" = 5 m BRK/PB (scanner.py), "slow" = hourly slow.v1 families
     slow: SlowConfig = field(default_factory=SlowConfig)
+    ci_block_days: int | None = None        # bootstrap block; None -> 1 (fast) / 7 (slow: 24-48 h holds overlap days)
     chunk_days: int = 30                    # bounded memory: features/scan per time chunk
     warmup_days: int = 30                   # feature warm-up before each chunk (BTC vol state uses 30 d)
 
@@ -68,15 +69,20 @@ def block_bootstrap_ci(values: np.ndarray, days: np.ndarray, n: int, seed: int,
     return float(np.percentile(means, a)), float(np.percentile(means, 100 - a))
 
 
+def _block_days(cfg: A0Config) -> int:
+    return cfg.ci_block_days or (7 if cfg.arm_kind == "slow" else 1)
+
+
 def group_stats(rows: list[dict[str, Any]], cfg: A0Config) -> dict[str, Any]:
     if not rows:
         return {"n": 0}
     net = np.array([r["net_r"] for r in rows])
     gross = np.array([r["gross_r"] for r in rows])
     days = np.array([r["t_decision"] // DAY for r in rows])
-    lo, hi = block_bootstrap_ci(net, days, cfg.bootstrap, cfg.seed)
-    lo99, _ = block_bootstrap_ci(net, days, cfg.bootstrap, cfg.seed, level=0.99)
-    glo, ghi = block_bootstrap_ci(gross, days, cfg.bootstrap, cfg.seed)
+    blocks = days // _block_days(cfg)                       # calendar blocks of ci_block_days
+    lo, hi = block_bootstrap_ci(net, blocks, cfg.bootstrap, cfg.seed)
+    lo99, _ = block_bootstrap_ci(net, blocks, cfg.bootstrap, cfg.seed, level=0.99)
+    glo, ghi = block_bootstrap_ci(gross, blocks, cfg.bootstrap, cfg.seed)
     exits = defaultdict(int)
     for r in rows:
         exits[r["exit_type"]] += 1
@@ -238,7 +244,9 @@ def run_a0(cfg: A0Config, out_dir: Path) -> dict[str, Any]:
     summary["verdict"] = {
         "gross_edge": g.get("n", 0) > 0 and g["gross_ci95"][0] > 0,
         "net_edge": g.get("n", 0) > 0 and g["net_ci95"][0] > 0,
-        "note": "decision-level, day-block bootstrap 95 % CI of the mean; 'edge' = CI lower bound > 0",
+        "note": f"decision-level, {_block_days(cfg)}-day block bootstrap 95 % CI of the mean; "
+                "'edge' = CI lower bound > 0",
+        "ci_block_days": _block_days(cfg),
         # pre-registered per family x side (slow.v1): net 99 % CI lower bound > 0 with n >= 30
         "pass_99": sorted(k for k, v in groups.items() if k.split("_")[0] in {p["family"] for p in labelled}
                           and k.count("_") == 1 and v.get("n", 0) >= 30 and v["net_ci99_lo"] > 0),
