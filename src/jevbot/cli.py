@@ -149,6 +149,45 @@ def cmd_research_drift(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_paper(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.marketdata.binance_rest import BinanceRest
+    from jevbot.paper.engine import PaperConfig, PaperEngine
+    from jevbot.paper.source import RestSource
+
+    cfg = _load(args)
+    state = Path(args.state_dir) if args.state_dir else Path(cfg.run_dir) / "paper"
+
+    async def main() -> int:
+        rest = BinanceRest(cfg.binance.rest_base, cfg.binance.rest)
+        try:
+            eng = PaperEngine(RestSource(rest), PaperConfig(state_dir=state))
+            sys.stdout.write(f"paper: config {eng.hash}, state {state}\n")
+            if args.once:
+                import time
+                now = int(time.time() * 1000)
+                await eng.step(now - now % 3_600_000)
+                await eng.settle(now)
+            else:
+                await eng.run()
+            return 0
+        finally:
+            await rest.aclose()
+    return _run_async(main)
+
+
+def cmd_paper_report(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.paper.engine import paper_report
+
+    cfg = _load(args)
+    state = Path(args.state_dir) if args.state_dir else Path(cfg.run_dir) / "paper"
+    sys.stdout.write(orjson.dumps(paper_report(state), option=orjson.OPT_INDENT_2).decode() + "\n")
+    return 0
+
+
 def cmd_universe_pool(args: argparse.Namespace) -> int:
     from datetime import date
     from pathlib import Path
@@ -300,6 +339,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None, help="output dir (default: next to the proposals)")
     p.add_argument("--all", action="store_true", help="all proposals, not only the selected ones")
     p.set_defaults(func=cmd_research_drift)
+
+    p = sub.add_parser("paper", help="locked prospective paper test of the slow families (public REST, no orders)")
+    _add_common(p)
+    p.add_argument("--state-dir", default=None, help="ledger directory (default: <run_dir>/paper)")
+    p.add_argument("--once", action="store_true", help="decide the last closed hour and settle, then exit")
+    p.set_defaults(func=cmd_paper)
+
+    p = sub.add_parser("paper-report", help="paper ledger stats per config hash (7-day block CIs)")
+    _add_common(p)
+    p.add_argument("--state-dir", default=None, help="ledger directory (default: <run_dir>/paper)")
+    p.set_defaults(func=cmd_paper_report)
 
     p = sub.add_parser("universe-pool", help="symbols to download so every day's top-N (by prior-day 1d quote "
                                              "volume, delisted included) is present for replay")

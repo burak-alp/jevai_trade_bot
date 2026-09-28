@@ -64,7 +64,15 @@ class SlowConfig:
 
 
 def compute_slow_features(b: SymbolBars, funding: tuple[np.ndarray, np.ndarray] | None = None) -> SymbolFeatures:
-    h1 = resample(b, H)
+    first_h = b.first_minute / H if b.first_minute >= 0 else None
+    return slow_features_from_hourly(b.symbol, b.start, resample(b, H), funding, b.listing_time, first_h)
+
+
+def slow_features_from_hourly(symbol: str, start: int, h1: dict[str, np.ndarray],
+                              funding: tuple[np.ndarray, np.ndarray] | None = None,
+                              listing_time: int | None = None, first_hour: float | None = None) -> SymbolFeatures:
+    """Hourly bars (open/high/low/close/qv, NaN = missing) on the grid ``start + k h`` -> slow.v1 features.
+    Shared by the historical replay (resampled 1m) and the live paper engine (REST 1h klines)."""
     J = len(h1["close"])
     j = np.arange(J)
     c = h1["close"]
@@ -86,9 +94,9 @@ def compute_slow_features(b: SymbolBars, funding: tuple[np.ndarray, np.ndarray] 
             "run_24h_atr": (lc - lag(lc, 24)) / atr_pct,
             "qv_24h": rolling(h1["qv"], 24, "sum"),
         }
-    t = b.start + (j + 1) * H * MIN
-    f["listing_age_d"] = ((t - b.listing_time) / DAY if b.listing_time is not None
-                          else np.where(b.first_minute >= 0, ((j + 1) * H - b.first_minute) / 1440.0, np.nan))
+    t = start + (j + 1) * H * MIN
+    f["listing_age_d"] = ((t - listing_time) / DAY if listing_time is not None
+                          else np.full(J, np.nan) if first_hour is None else (j + 1 - first_hour) / 24.0)
     f["funding_bps_8h"] = np.full(J, np.nan)
     if funding is not None and len(funding[0]):
         ft, fr = funding
@@ -99,7 +107,7 @@ def compute_slow_features(b: SymbolBars, funding: tuple[np.ndarray, np.ndarray] 
         prev = np.where(idx >= 1, ft[np.maximum(idx - 1, 0)], ft[np.maximum(idx, 0)] - 8 * 3_600_000)
         hrs = np.clip((ft[np.maximum(idx, 0)] - prev) / 3_600_000, 1.0, 8.0)
         f["funding_bps_8h"] = rate * 8.0 / hrs
-    return SymbolFeatures(b.symbol, b.start, J, f, tick_min=H)
+    return SymbolFeatures(symbol, start, J, f, tick_min=H)
 
 
 def add_btc_relative(feats: dict[str, SymbolFeatures], btc: str = "BTCUSDT") -> None:
