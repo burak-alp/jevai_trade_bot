@@ -28,3 +28,18 @@ def test_load_open_interest_sorted_unique_positive(tmp_path):
     assert list(ot - START) == [0, 300_000, 600_000] and list(ov) == [1.0, 2.0, 3.0]
     ot, ov = load_open_interest(tmp_path, "NONEUSDT")
     assert len(ot) == 0 and len(ov) == 0
+
+
+def test_load_open_interest_reads_only_the_requested_days(tmp_path):
+    day = 86_400_000
+    for d, v in ((0, 1.0), (1, 2.0), (5, 3.0)):
+        make_metrics(tmp_path, "AAAUSDT", np.array([START + d * day], dtype=np.int64), np.array([v]),
+                     period=f"2023-11-{15 + d:02d}")                  # START is 2023-11-15
+    _, ov = load_open_interest(tmp_path, "AAAUSDT", START + 5 * day, START + 6 * day)
+    assert list(ov) == [3.0]                                          # day 5 (+-1 d margin), not days 0/1
+    _, ov = load_open_interest(tmp_path, "AAAUSDT")
+    assert list(ov) == [1.0, 2.0, 3.0]
+    make_metrics(tmp_path, "AAAUSDT", np.array([START + 2 * day], dtype=np.int64), np.array([9.0]),
+                 period="2023-11-17")                                 # manifest changed -> index rebuilt
+    _, ov = load_open_interest(tmp_path, "AAAUSDT", START + 2 * day, START + 2 * day)
+    assert list(ov) == [2.0, 9.0]

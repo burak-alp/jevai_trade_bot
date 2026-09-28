@@ -52,7 +52,9 @@ def test_canonical_state_is_side_aligned_and_anonymous():
     text = json.dumps(long)
     assert "S0USDT" not in text and "symbol" not in text and "100.0" not in text
     assert long["proposal"]["stop_dist_atr_1h"] == 3.0 and long["proposal"]["tp_dist_atr_1h"] == 9.0
-    assert long["asset"]["funding_paid_by_position_bps_8h"] == 1.5 and "open_interest_chg_24h_pct" not in long["asset"]
+    # a long pays positive funding -> received is negative (positive values favor the position, as the question says)
+    assert long["asset"]["funding_received_by_position_bps_8h"] == -1.5
+    assert "open_interest_chg_24h_pct" not in long["asset"] and long["schema"] == "state.slow.v2"
     assert long["market"]["btc_ema50_vs_ema200_sign"] == -1.0
     raw = raw_state({"ret_24h": -0.03, "atr_pct": 0.006, "ema_trend": -1.0}, None)
     assert raw["asset"]["ret_24h_atr_1h"] == -5.0 and "proposal" not in raw

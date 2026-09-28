@@ -186,9 +186,10 @@ def _block_ci(fn: Any, days: np.ndarray, n: int = 1000, seed: int = 7) -> list[f
     return [round(float(np.percentile(vals, 2.5)), 4), round(float(np.percentile(vals, 97.5)), 4)]
 
 
-def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0) -> dict[str, Any]:
+def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0, block_days: int = 7) -> dict[str, Any]:
     """Operations, arm B (trade_success vs paper outcomes) and arm C (direction_h vs realised moves).
-    CIs resample calendar days (24 h targets overlap within a day)."""
+    CIs resample calendar blocks of ``block_days`` (7, as the slow A0 arm): 24-48 h targets overlap
+    neighbouring days and regimes persist, so day blocks would understate the uncertainty."""
     state_dir = Path(state_dir)
     led = read_jsonl(state_dir / "jev.jsonl")
     runs = [r for r in led if r.get("kind") == "run"]
@@ -210,6 +211,7 @@ def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0)
         "latency_ms_p50": float(np.percentile(lat, 50)) if lat else None,
         "latency_ms_p95": float(np.percentile(lat, 95)) if lat else None,
         "late_trade_success": sum(1 for r in judg if r.get("late")),
+        "ci_block_days": block_days,
     }
     # arm B
     outcomes = {o["id"]: o for o in read_jsonl(state_dir / "outcomes.jsonl") if o.get("exit_type") in ("TP", "SL", "TIME")}
@@ -220,10 +222,11 @@ def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0)
         p = np.array([r["probs"]["trade_success"] for r, _ in ts])
         y = np.array([o["y_success"] for _, o in ts])
         net = np.array([o["net_r"] for _, o in ts])
-        days = np.array([r["t_tick"] // DAY for r, _ in ts])
+        days = np.array([r["t_tick"] // DAY // block_days for r, _ in ts])
         med = float(np.median(p))
         hi = p >= med
-        b.update({"tp_rate": round(float(y.mean()), 4), "mean_p": round(float(p.mean()), 4),
+        b.update({"blocks": int(len(np.unique(days))), "tp_rate": round(float(y.mean()), 4),
+                  "mean_p": round(float(p.mean()), 4),
                   "auc": round(auc(p, y), 4), "auc_ci95": _block_ci(lambda i: auc(p[i], y[i]), days),
                   "net_r_all": round(float(net.mean()), 4),
                   "net_r_p_above_median": round(float(net[hi].mean()), 4) if hi.any() else None,
@@ -241,11 +244,11 @@ def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0)
         score = up - dn
         yc = np.array([o["y"] for _, _, o in dj])
         ret_bps = np.array([o["ret_bps"] for _, _, o in dj])
-        days = np.array([op["t_tick"] // DAY for _, op, _ in dj])
+        days = np.array([op["t_tick"] // DAY // block_days for _, op, _ in dj])
         moved = yc != "flat"
         ybin = (yc == "up").astype(int)
         base = {k: round(float((yc == k).mean()), 4) for k in ("up", "flat", "down")}
-        c.update({"base_rates": base, "mean_score": round(float(score.mean()), 4),
+        c.update({"blocks": int(len(np.unique(days))), "base_rates": base, "mean_score": round(float(score.mean()), 4),
                   "auc_up_vs_down": round(auc(score[moved], ybin[moved]), 4) if moved.any() else None,
                   "auc_ci95": _block_ci(lambda i: auc(score[i][moved[i]], ybin[i][moved[i]]), days)})
         sig = np.abs(score) >= signal_min

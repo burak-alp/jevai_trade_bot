@@ -8,12 +8,14 @@ here; consumers decide). Files flagged ``suspect`` by the downloader are exclude
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
 
 from jevbot.hist.catalog import list_files
+from jevbot.recorder.integrity import read_manifest
 
 MIN = 60_000
 DAY = 86_400_000
@@ -90,13 +92,48 @@ def load_funding(hist_root: Path, symbol: str) -> tuple[np.ndarray, np.ndarray]:
     return t_all[keep], r_all[keep]
 
 
-def load_open_interest(hist_root: Path, symbol: str) -> tuple[np.ndarray, np.ndarray]:
+_METRICS_INDEX: dict[str, tuple[float, dict[str, list[tuple[str, Path]]]]] = {}
+
+
+def _metrics_index(root: Path) -> dict[str, list[tuple[str, Path]]]:
+    """symbol -> [(period, path)] of non-suspect ``metrics`` files; parsed once per manifest version
+    (the dev pool has ~265 k daily files, re-reading the manifest per symbol and chunk dominated)."""
+    mf = root / "_manifest.jsonl"
+    key, mtime = str(root.resolve()), (mf.stat().st_mtime if mf.exists() else 0.0)
+    hit = _METRICS_INDEX.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    idx: dict[str, list[tuple[str, Path]]] = {}
+    for rel, e in read_manifest(root).items():
+        if e.get("quality", "ok") == "suspect" or not e.get("symbol"):
+            continue
+        idx.setdefault(e["symbol"], []).append((str(e.get("period", "")), root / rel))
+    _METRICS_INDEX[key] = (mtime, idx)
+    return idx
+
+
+def _day(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%d")
+
+
+def load_open_interest(hist_root: Path, symbol: str, start: int | None = None,
+                       end: int | None = None) -> tuple[np.ndarray, np.ndarray]:
     """5 m open interest from the ``metrics`` dataset: (create_time ms, sum_open_interest in contracts),
-    sorted and unique; non-positive values dropped; empty arrays if not downloaded."""
-    files = list_files(Path(hist_root) / "metrics", symbols={symbol})
+    sorted and unique; non-positive values dropped; empty arrays if not downloaded. With ``start``/``end``
+    (ms) only the daily files of [start - 1 d, end + 1 d] are read (files without a daily period always)."""
+    files = []
+    lo = _day(start - DAY) if start is not None else ""
+    hi = _day(end + DAY) if end is not None else "9999"
+    for period, path in sorted(_metrics_index(Path(hist_root) / "metrics").get(symbol, [])):
+        daily = len(period) == 10 and period[4] == "-"
+        if not daily or lo <= period <= hi:
+            files.append(path)
     ts, vs = [], []
     for f in files:
-        t = pq.read_table(f, columns=["create_time", "sum_open_interest"])
+        try:
+            t = pq.read_table(f, columns=["create_time", "sum_open_interest"])
+        except FileNotFoundError:
+            continue
         ts.append(t.column("create_time").to_numpy())
         vs.append(t.column("sum_open_interest").to_numpy(zero_copy_only=False).astype(np.float64))
     if not ts:

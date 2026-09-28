@@ -59,7 +59,8 @@ def make_symbol(root: Path, symbol: str, start: int, minutes: int, seed: int, ba
     return r
 
 
-def make_metrics(root: Path, symbol: str, create_time: np.ndarray, open_interest: np.ndarray) -> None:
+def make_metrics(root: Path, symbol: str, create_time: np.ndarray, open_interest: np.ndarray,
+                 period: str = "all") -> None:
     """``metrics`` rows (5 m open interest); the ratio columns are constant placeholders."""
     n = len(create_time)
     one = np.ones(n)
@@ -68,4 +69,4 @@ def make_metrics(root: Path, symbol: str, create_time: np.ndarray, open_interest
                   "sum_open_interest_value": np.asarray(open_interest, dtype=np.float64) * 100.0,
                   "count_toptrader_long_short_ratio": one, "sum_toptrader_long_short_ratio": one,
                   "count_long_short_ratio": one, "sum_taker_long_short_vol_ratio": one})
-    _write(root, f"metrics/symbol={symbol}/{symbol}-metrics-all.parquet", t, symbol, "all")
+    _write(root, f"metrics/symbol={symbol}/{symbol}-metrics-{period}.parquet", t, symbol, period)

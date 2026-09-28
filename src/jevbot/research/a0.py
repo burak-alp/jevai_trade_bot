@@ -165,7 +165,7 @@ def _chunk_features(cfg: A0Config, syms: list[str], c0: int, c1: int,
         b.listing_time = listing.get(s)                     # PIT listing date, not first minute in the window
         fund[s] = load_funding(cfg.hist_root, s)
         if slow:
-            oi = load_open_interest(cfg.hist_root, s) if cfg.arm_kind == "pos" else None
+            oi = load_open_interest(cfg.hist_root, s, w0, c1) if cfg.arm_kind == "pos" else None
             feats[s] = compute_slow_features(b, fund[s], oi)
             continue
         sf = compute_symbol_features(b, fund[s])

@@ -15,7 +15,7 @@ from typing import Any
 
 import orjson
 
-STATE_SCHEMA = "state.slow.v1"
+STATE_SCHEMA = "state.slow.v2"                # v2: funding as received (positive favors the position)
 FAMILY_NEUTRAL = {"TSM": "trend_breakout", "XSM": "relative_strength_rank", "FUND": "funding_crowding_reversal",
                   "CROWD": "open_interest_crowding_reversal", "FLUSH": "deleveraging_reversal"}
 
@@ -53,7 +53,7 @@ def canonical_state(p: dict[str, Any]) -> dict[str, Any]:
         ("ret_7d_vs_btc_pct", _mul(s, p.get("rel_ret_7d")) * 100),
         ("ret_4h_atr_1h", _mul(s, p.get("run_4h_atr"))),
         ("ema50_vs_ema200_sign", _mul(s, p.get("ema_trend"))),
-        ("funding_paid_by_position_bps_8h", _mul(s, p.get("funding_bps_8h"))),
+        ("funding_received_by_position_bps_8h", _mul(-s, p.get("funding_bps_8h"))),
         ("open_interest_chg_24h_pct", _mul(p.get("oi_chg_24h"), 100)),
         ("open_interest_chg_4h_pct", _mul(p.get("oi_chg_4h"), 100)),
         ("atr_1h_bps", _mul(atr, 1e4)),
