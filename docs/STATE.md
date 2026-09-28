@@ -1,6 +1,6 @@
 # STATE — tek sayfa proje durumu (önce bunu oku; ≤ 60 satır tutulur, her karar sonrası güncellenir)
 
-Güncelleme: 2026-09-29 (Claude, yerel). Ayrıntı gerekirse: `python scripts/rag.py query "<konu>" --max-chars 1800`.
+Güncelleme: 2026-09-29 03:15 (Claude, yerel). Ayrıntı gerekirse: `python scripts/rag.py query "<konu>" --max-chars 1800`.
 
 ## Hedef
 Kripto (Binance USDⓈ-M) için maliyet sonrası kârlı bot; kaldıraçlı/kaldıraçsız serbest. Mimari: deterministik
@@ -16,6 +16,9 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
 | reg.v1 BTC 1h trend kapısı | holdout 2024-01 → 2025-03 (yakıldı) | geçmedi |
 | A1 lojistik meta-labeler | walk-forward 2024-07 → 2026-03 | AUC 0.525, getiri rastgele yarıyla aynı |
 | rejim tavanı (betimleyici) | 2024 → 2026 | kahin rejim +0.25/+0.34 R; bilinen rejim −0.03/−0.07 R |
+| carry.v1 seçici alt funding carry | 2024-01 → 2026-09 | +%1.0/yıl, h2 −%3.5 → geçmedi (maliyet funding'in %60'ı) |
+| carry.base BTC+ETH (referans) | aynı | +%4.9/yıl [4.0, 5.9], DD %0.4; h2 %2.7 — nakit "earn" faizi mertebesi |
+| hlp.v1 Hyperliquid kalıcılık | P1 Mar–May → P2 Haz–Ağu 2026 | yansız örneklemde Spearman +0.005; P1 kazananları P2 medyan −%95 → kopya yolu yok |
 Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, kiraz toplanmaz.
 
 ## Çalışanlar
