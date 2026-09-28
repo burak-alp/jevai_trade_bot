@@ -4,6 +4,7 @@ Usage: python scripts/hl_persistence.py
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -83,6 +84,7 @@ def analyse(users: list[str], port: dict, turnover: dict, label: str) -> list[st
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
     s = orjson.loads((OUT / "sample.json").read_bytes())
     port = {}
     for line in (OUT / "portfolio.jsonl").read_bytes().splitlines():

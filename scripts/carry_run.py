@@ -5,6 +5,7 @@ Usage: python scripts/carry_run.py [--end 2026-09-26]
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -18,6 +19,7 @@ POOLS = ("data/research/pool-2024.json", "data/research/pool-dev.json", "data/re
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default="2024-01-01")
     ap.add_argument("--end", default="2026-09-26")
