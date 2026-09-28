@@ -1,4 +1,4 @@
-"""Locked prospective paper test for the slow families (no orders, no keys, no Jev).
+"""Locked prospective paper test for the slow families (no orders, no exchange keys).
 
 Every hour, at the close of the hourly bar, the engine builds slow.v1 features from live
 public data with the replay's own code, runs the replay's scanner and appends the tick's
@@ -6,6 +6,9 @@ proposals to an append-only decision ledger *before* any outcome exists. After a
 horizon has passed, it is settled with the replay's labeler on 1m klines + 1m mark-price
 klines (same pessimistic rules and cost model), into an outcome ledger. The config hash is
 written on every row; a report never mixes configurations.
+
+Optional Jev shadow (``shadow``, see jevbot.judgment.shadow): after a tick's decisions are on disk,
+Jev is asked about them; answers go to their own ledger and never change a decision or its timing.
 """
 
 from __future__ import annotations
@@ -90,8 +93,9 @@ def _git_sha() -> str:
 
 
 class PaperEngine:
-    def __init__(self, src: MarketSource, cfg: PaperConfig, clock: Any = None) -> None:
-        self.src, self.cfg = src, cfg
+    def __init__(self, src: MarketSource, cfg: PaperConfig, clock: Any = None, shadow: Any = None) -> None:
+        self.src, self.cfg, self.shadow = src, cfg, shadow
+        self._feats: dict[str, Any] | None = None
         self.clock = clock or (lambda: int(time.time() * 1000))
         self.decisions = Path(cfg.state_dir) / "decisions.jsonl"
         self.outcomes = Path(cfg.state_dir) / "outcomes.jsonl"
@@ -121,6 +125,7 @@ class PaperEngine:
         if "BTCUSDT" not in feats or len(feats) < 2:
             return []
         add_btc_relative(feats)
+        self._feats = feats
         return [p for p in scan_slow(feats, self.cfg.slow, self.cfg.tradable_top) if p["t_decision"] == t_tick]
 
     async def step(self, t_tick: int) -> list[dict[str, Any]]:
@@ -139,6 +144,7 @@ class PaperEngine:
             self.last_tick = t_tick
             log.warning("paper_tick_skipped_late", t_tick=t_tick)
             return []
+        self._feats = None
         props = await self.decide(t_tick)
         rows = []
         for p in props:
@@ -156,6 +162,11 @@ class PaperEngine:
         _append(self.decisions, rows)
         self.last_tick = t_tick
         log.info("paper_tick", t_tick=t_tick, proposals=len(props), entry_delay_s=(t_entry - t_tick) / 1000)
+        if self.shadow is not None:                          # after the ledger write: cannot affect decisions
+            try:
+                await self.shadow.on_tick(t_tick, t_entry, rows[:-1], self._feats)
+            except Exception:
+                log.exception("jev_shadow_failed", t_tick=t_tick)
         return rows[:-1]
 
     async def settle(self, now: int) -> list[dict[str, Any]]:
@@ -194,6 +205,8 @@ class PaperEngine:
             try:
                 await self.step(t_tick)
                 await self.settle(self.clock())
+                if self.shadow is not None:
+                    await self.shadow.settle(self.src, self.clock())
             except Exception:
                 log.exception("paper_step_failed", t_tick=t_tick)
                 await asyncio.sleep(60)

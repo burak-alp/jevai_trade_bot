@@ -165,8 +165,19 @@ def cmd_paper(args: argparse.Namespace) -> int:
 
     async def main() -> int:
         rest = BinanceRest(cfg.binance.rest_base, cfg.binance.rest)
+        jev = None
         try:
-            eng = PaperEngine(RestSource(rest), PaperConfig(state_dir=state))
+            shadow = None
+            if args.jev_shadow:                             # Jev asked after each tick is on disk; decides nothing
+                import time as _t
+
+                from jevbot.judgment.client import JevClient
+                from jevbot.judgment.shadow import JevShadow
+                jev = JevClient(base_url=args.jev_base_url)
+                shadow = JevShadow(jev, state, panel_top=args.jev_panel_top)
+                model = await shadow.start(int(_t.time() * 1000))
+                sys.stdout.write(f"jev shadow: model {model}\n")
+            eng = PaperEngine(RestSource(rest), PaperConfig(state_dir=state), shadow=shadow)
             sys.stdout.write(f"paper: config {eng.hash}, state {state}\n")
             if args.once:                                   # wait for the next hour close, decide it, settle
                 import time
@@ -177,13 +188,54 @@ def cmd_paper(args: argparse.Namespace) -> int:
                 await asyncio.sleep(wait)
                 rows = await eng.step(t_tick)
                 await eng.settle(int(time.time() * 1000))
+                if shadow is not None:
+                    await shadow.settle(eng.src, int(time.time() * 1000))
                 sys.stdout.write(f"tick {t_tick}: {len(rows)} decisions\n")
             else:
                 await eng.run()
             return 0
         finally:
             await rest.aclose()
+            if jev is not None:
+                await jev.aclose()
     return _run_async(main)
+
+
+def cmd_jev_check(args: argparse.Namespace) -> int:
+    """One models call and one sample judgment (the key is never printed): is Jev reachable and well-formed?"""
+    from jevbot.judgment.client import JevClient, pick_model
+    from jevbot.judgment.questions import direction_h, trade_success
+    from jevbot.judgment.state import canonical_state
+
+    async def main() -> int:
+        jev = JevClient(base_url=args.jev_base_url, timeout_s=30.0)
+        try:
+            models = await jev.models()
+            model, pinning = pick_model(models)
+            sys.stdout.write(f"models: {[m.get('name') for m in models]} -> {model} ({pinning})\n")
+            p = {"family": "TSM", "side": 1, "atr_pct": 0.006, "entry_ref": 100.0, "stop_dist": 1.8,
+                 "stop_dist_bps": 180.0, "r_tp": 3.0, "horizon_min": 2880, "cost_r": 0.04, "ret_24h": 0.03,
+                 "ret_7d": 0.08, "rel_ret_7d": 0.05, "run_4h_atr": 1.2, "ema_trend": 1.0, "funding_bps_8h": 1.0,
+                 "vol_rank": 12, "btc_trend": 1.0}
+            st = canonical_state(p)
+            r = await jev.ask(model or "jev-latest", st, {"trade_success": trade_success(st),
+                                                         "direction_h": direction_h(1440)})
+            sys.stdout.write(orjson.dumps(r, option=orjson.OPT_INDENT_2).decode() + "\n")
+            return 0 if r.get("status") == "ok" else 8
+        finally:
+            await jev.aclose()
+    return _run_async(main)
+
+
+def cmd_jev_report(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.judgment.shadow import jev_report
+
+    cfg = _load(args)
+    state = Path(args.state_dir) if args.state_dir else Path(cfg.run_dir) / "paper"
+    sys.stdout.write(orjson.dumps(jev_report(state), option=orjson.OPT_INDENT_2).decode() + "\n")
+    return 0
 
 
 def cmd_paper_report(args: argparse.Namespace) -> int:
@@ -354,7 +406,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.add_argument("--state-dir", default=None, help="ledger directory (default: <run_dir>/paper)")
     p.add_argument("--once", action="store_true", help="wait for the next hour close, decide it, settle, exit")
+    p.add_argument("--jev-shadow", action="store_true",
+                   help="ask Jev (TypeSafe; key from JEV_API_KEY) about every decision + a 4-hourly direction "
+                        "panel; answers go to <state>/jev.jsonl and never change a decision")
+    p.add_argument("--jev-base-url", default="https://api.typesafe.ai")
+    p.add_argument("--jev-panel-top", type=int, default=30, help="direction panel: top-N by 24 h quote volume")
     p.set_defaults(func=cmd_paper)
+
+    p = sub.add_parser("jev-check", help="Jev reachability: list models, one sample judgment (no orders)")
+    p.add_argument("--jev-base-url", default="https://api.typesafe.ai")
+    p.set_defaults(func=cmd_jev_check)
+
+    p = sub.add_parser("jev-report", help="Jev shadow: operations, arm B (trade_success) and arm C (direction)")
+    _add_common(p)
+    p.add_argument("--state-dir", default=None, help="paper ledger directory (default: <run_dir>/paper)")
+    p.set_defaults(func=cmd_jev_report)
 
     p = sub.add_parser("paper-report", help="paper ledger counts; R stats only after the 6 week / 40 trade gate")
     _add_common(p)
