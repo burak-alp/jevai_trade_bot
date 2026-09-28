@@ -13,6 +13,7 @@ import hashlib
 import math
 from typing import Any
 
+import numpy as np
 import orjson
 
 STATE_SCHEMA = "state.slow.v2"                # v2: funding as received (positive favors the position)
@@ -85,6 +86,33 @@ def raw_state(f: dict[str, Any], btc: dict[str, Any] | None) -> dict[str, Any]:
                          ("btc_ret_7d_atr_1h", _mul(btc.get("ret_7d"), 1.0) / (batr or float("nan"))),
                          ("btc_ema50_vs_ema200_sign", btc.get("ema_trend"))])
     return {"schema": STATE_SCHEMA, "variant": "raw", "asset": asset, "market": market}
+
+
+REGIME_SCHEMA = "state.regime.v1"
+
+
+def regime_state(btc: dict[str, Any], market: list[dict[str, Any]]) -> dict[str, Any]:
+    """BTC state + cross-sectional breadth of the tradable pool at a tick (no dates, no prices)."""
+    atr = btc.get("atr_pct")
+    r24 = np.array([_mul(m.get("ret_24h"), 1.0) for m in market])
+    r7 = np.array([_mul(m.get("ret_7d"), 1.0) for m in market])
+    r24, r7 = r24[np.isfinite(r24)], r7[np.isfinite(r7)]
+    asset = _block([
+        ("btc_ret_24h_atr_1h", _mul(btc.get("ret_24h"), 1.0) / (atr or float("nan"))),
+        ("btc_ret_7d_atr_1h", _mul(btc.get("ret_7d"), 1.0) / (atr or float("nan"))),
+        ("btc_ret_7d_pct", _mul(btc.get("ret_7d"), 100)),
+        ("btc_ret_4h_atr_1h", btc.get("run_4h_atr")),
+        ("btc_ema50_vs_ema200_sign", btc.get("ema_trend")),
+        ("btc_funding_bps_8h", btc.get("funding_bps_8h")),
+        ("btc_atr_1h_bps", _mul(atr, 1e4)),
+    ])
+    breadth = _block([
+        ("pool_size", len(market)),
+        ("share_up_24h", float((r24 > 0).mean()) if len(r24) else float("nan")),
+        ("share_up_7d", float((r7 > 0).mean()) if len(r7) else float("nan")),
+        ("median_ret_7d_pct", float(np.median(r7)) * 100 if len(r7) else float("nan")),
+    ])
+    return {"schema": REGIME_SCHEMA, "variant": "raw", "asset": asset, "market": breadth}
 
 
 def canonical_json(x: Any) -> bytes:

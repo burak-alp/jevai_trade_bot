@@ -20,6 +20,20 @@ DIRECTION = (
 PROMPT_HASH = sha({"qs": QS_VERSION, "trade_success": TRADE_SUCCESS, "direction_h": DIRECTION})[:16]
 
 
+BTC_REGIME = (
+    "Over the next {days} days, will the BTC price change be above +{pct}% (up), below -{pct}% (down), "
+    "or in between (flat)?")
+REGIME_HASH = sha({"btc_regime": BTC_REGIME})[:16]         # separate: adding it leaves PROMPT_HASH unchanged
+
+
+def btc_regime(days: int = 7, pct: float = 3.0) -> dict[str, Any]:
+    """Weekly BTC regime (the user's thesis: run the family that suits the coming regime)."""
+    p = f"{pct:g}"
+    return {"type": "choice", "instructions": BTC_REGIME.format(days=days, pct=p),
+            "criteria": {"up": f"BTC price change above +{p}%", "flat": f"BTC price change between -{p}% and +{p}%",
+                         "down": f"BTC price change below -{p}%"}}
+
+
 def direction_band_atr(horizon_min: int) -> float:
     """Flat band: +-0.5 x the random-walk scale of the horizon in 1h ATRs (24 h -> 2.45 ATR)."""
     return round(0.5 * math.sqrt(horizon_min / 60), 2)

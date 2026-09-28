@@ -27,8 +27,9 @@ import numpy as np
 
 from jevbot.core.logging import get_logger
 from jevbot.judgment.client import JevClient, pick_model
-from jevbot.judgment.questions import PROMPT_HASH, QS_VERSION, direction_band_atr, direction_h, trade_success
-from jevbot.judgment.state import STATE_SCHEMA, canonical_state, raw_state, sha
+from jevbot.judgment.questions import (PROMPT_HASH, QS_VERSION, REGIME_HASH, btc_regime, direction_band_atr,
+                                       direction_h, trade_success)
+from jevbot.judgment.state import REGIME_SCHEMA, STATE_SCHEMA, canonical_state, raw_state, regime_state, sha
 from jevbot.paper.engine import _append, read_jsonl
 
 log = get_logger(__name__)
@@ -46,10 +47,11 @@ def _at(sf: Any, k: str) -> float:
 class JevShadow:
     def __init__(self, client: JevClient, state_dir: Path, panel_top: int = 30,
                  panel_hours: tuple[int, ...] = (0, 4, 8, 12, 16, 20), dir_horizon_min: int = 1440,
-                 settle_delay_min: int = 10) -> None:
+                 settle_delay_min: int = 10, regime_days: int = 7, regime_pct: float = 3.0) -> None:
         self.client, self.path = client, Path(state_dir) / "jev.jsonl"
         self.panel_top, self.panel_hours = panel_top, panel_hours
         self.dir_horizon_min, self.settle_delay_min = dir_horizon_min, settle_delay_min
+        self.regime_days, self.regime_pct = regime_days, regime_pct
         self.model: str | None = None
 
     async def start(self, at: int) -> str:
@@ -64,7 +66,8 @@ class JevShadow:
         self.model = self.model or "jev-latest"
         _append(self.path, [{"kind": "run", "at": at, "model_requested": self.model, "pinning": pinning,
                              "models": names, "questionset": QS_VERSION, "prompt_hash": PROMPT_HASH,
-                             "state_schema": STATE_SCHEMA}])
+                             "state_schema": STATE_SCHEMA, "regime_schema": REGIME_SCHEMA,
+                             "regime_hash": REGIME_HASH}])
         return self.model
 
     def _panel(self, t_tick: int, feats: dict[str, Any]) -> list[str]:
@@ -109,6 +112,15 @@ class JevShadow:
                 st = raw_state(f, btc)
                 asks.append(({"kind": "ask", "question": "direction_h", "id": did, "t_tick": t_tick,
                               "t_entry": t_entry, "state_hash": sha(st)[:16]}, st, {"direction_h": direction_h(H)}))
+            if btc and t_tick % DAY == 0 and btc["close"] > 0:          # weekly BTC regime, once a day
+                rid = hashlib.sha256(f"regime|BTCUSDT|{t_tick}|{self.regime_days}".encode()).hexdigest()[:16]
+                opens.append({"kind": "dir_open", "id": rid, "symbol": "BTCUSDT", "t_tick": t_tick,
+                              "close": btc["close"], "atr_pct": btc["atr_pct"], "horizon_min": self.regime_days * 1440,
+                              "band_pct": self.regime_pct / 100, "question": "btc_regime_7d", "source": "regime"})
+                st = regime_state(btc, [{k: _at(sf, k) for k in ("ret_24h", "ret_7d")} for sf in feats.values()])
+                asks.append(({"kind": "ask", "question": "btc_regime_7d", "id": rid, "t_tick": t_tick,
+                              "t_entry": t_entry, "state_hash": sha(st)[:16]}, st,
+                             {"btc_regime_7d": btc_regime(self.regime_days, self.regime_pct)}))
         if not asks:
             return []
         _append(self.path, opens + [{**a, "model_requested": self.model, "state": st} for a, st, _ in asks])
@@ -140,7 +152,11 @@ class JevShadow:
                 out.append({"kind": "dir_outcome", "id": o["id"], "status": "data_gap", "settled_at": now})
                 continue
             ret_atr = math.log(c / o["close"]) / o["atr_pct"]
-            y = "up" if ret_atr > o["band_atr"] else "down" if ret_atr < -o["band_atr"] else "flat"
+            if o.get("band_pct") is not None:                          # regime: plain percent band
+                ret_pct = c / o["close"] - 1.0
+                y = "up" if ret_pct > o["band_pct"] else "down" if ret_pct < -o["band_pct"] else "flat"
+            else:
+                y = "up" if ret_atr > o["band_atr"] else "down" if ret_atr < -o["band_atr"] else "flat"
             out.append({"kind": "dir_outcome", "id": o["id"], "status": "ok", "ret_atr": ret_atr,
                         "ret_bps": math.log(c / o["close"]) * 1e4, "y": y, "settled_at": now})
         if out:
@@ -265,4 +281,18 @@ def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0,
                                                        else float("nan"), days),
                       "signal_hit_rate": round(float((np.sign(score[sig]) * ret_bps[sig] > 0).mean()), 4)})
     rep["arm_C_direction"] = c
+    # weekly BTC regime (user thesis): accuracy on settled calls; overlapping 7 d targets -> also every 7th day
+    rj = [(r, douts[r["id"]]) for r in judg if r["question"] == "btc_regime_7d" and r.get("status") == "ok"
+          and r["id"] in douts and asked.get((r["question"], r["id"])) == REGIME_SCHEMA]
+    g: dict[str, Any] = {"n": len(rj)}
+    if rj:
+        yv = np.array([o["y"] for _, o in rj])
+        pick = np.array([max(("up", "flat", "down"), key=lambda k: r["probs"][f"btc_regime_7d.{k}"]) for r, _ in rj])
+        weekly = np.array([(r["t_tick"] // DAY) % 7 == 0 for r, _ in rj])
+        g.update({"accuracy": round(float((pick == yv).mean()), 4),
+                  "base_rates": {k: round(float((yv == k).mean()), 4) for k in ("up", "flat", "down")},
+                  "n_non_overlapping": int(weekly.sum()),
+                  "accuracy_non_overlapping": round(float((pick[weekly] == yv[weekly]).mean()), 4) if weekly.any()
+                  else None})
+    rep["btc_regime_7d"] = g
     return rep

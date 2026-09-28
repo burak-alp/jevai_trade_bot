@@ -153,7 +153,11 @@ def test_shadow_on_paper_engine_end_to_end(tmp_path):
     assert outs and {r["id"] for r in outs} <= {r["id"] for r in opens}
     assert all(r["y"] in ("up", "flat", "down") for r in outs if r["status"] == "ok")
 
+    regime = [a for a in asks if a["question"] == "btc_regime_7d"]
+    assert regime and all(a["t_tick"] % DAY == 0 and a["state"]["schema"] == "state.regime.v1" for a in regime)
+    assert all("share_up_7d" in a["state"]["market"] for a in regime)
     rep = jev_report(cfg.state_dir)
+    assert rep["btc_regime_7d"]["n"] > 0 and 0.0 <= rep["btc_regime_7d"]["accuracy"] <= 1.0
     assert rep["models_returned"] == ["jev-1.13.0"] and rep["tokens"]["input"] == 300 * len(judg)
     b, c = rep["arm_B_trade_success"], rep["arm_C_direction"]
     assert b["n"] > 0 and 0.0 <= b["mean_p"] <= 1.0
