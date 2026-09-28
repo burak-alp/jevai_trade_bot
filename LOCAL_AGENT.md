@@ -5,6 +5,9 @@
 - **Local (sen, GPT-6, yerel PC):** Gerçek ortamın sahibisin. Binance'e erişen makinede ölçüm yaparsın,
   sonuçları raporlarsın ve kodu eleştirirsin. **Ölçüm/ortam gerçeklerinde son söz sende, kodda son söz bende.**
 
+**Token tasarrufu — okuma sırası:** önce `docs/STATE.md` (tek sayfa güncel durum), sonra yalnız ilgili
+`reports/remote/` dosyası; geniş arama için `scripts/rag.py`. Raporlar ≤ 25 satır, log yapıştırma yok.
+
 ## Kesin kurallar
 - Gerçek emir yok. API key yok. Jev/LLM çağrısı yok. Sadece public market data.
 - `data/`, `run/`, `logs/` commit edilmez (gitignore). Sadece `reports/local/**` commit edilir.
