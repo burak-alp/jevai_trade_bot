@@ -11,6 +11,8 @@
 - `src/` altını doğrudan değiştirme. Düzeltme önerisini rapora yaz. Zorunlu hotfix gerekiyorsa
   `local/<konu>` adlı ayrı branch'e koy ve raporda linkini ver.
 - Token tasarrufu: log yapıştırma; sayıları özetle, dosyaya referans ver.
+- Geniş doküman/rapor okumadan önce `python scripts/rag.py query "aranan konu" --max-chars 1800`;
+  dönen parçaları kaynak dosyada doğrula. İndeks yereldir, LLM çağrısı yapmaz.
 - Sonuç uydurma. Bir adım çalışmadıysa "çalışmadı + hata" yaz.
 
 ## Ortam

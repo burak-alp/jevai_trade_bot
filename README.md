@@ -23,6 +23,14 @@ Sprint 1'e geçiş kapısı: gerçek Binance'e karşı [`docs/03_live_validation
 - [`docs/03_live_validation_runbook.md`](docs/03_live_validation_runbook.md) — VPS'te smoke / 1 saat / 24 saat doğrulama komutları
 - [`LOCAL_AGENT.md`](LOCAL_AGENT.md) — yerel ajan (GPT-6) görev + rapor + eleştiri protokolü; `scripts/local_validation.sh`
 
+## Yerel RAG (token tasarrufu)
+
+`python scripts/rag.py query "PIT evreni neden 486 sembol" --scope reports --max-chars 1800`
+komutu `README`, `docs/`, `reports/`, `src/`, `config/` ve `scripts/` içindeki ilgili
+parçaları dosya/satır referansıyla getirir. İndeks `run/rag/index.sqlite` içinde
+artımlı güncellenir; model, API anahtarı ve ağ çağrısı kullanmaz. `--scope docs|reports|code|all`
+ve `--limit` ile bağlamı daraltın. Sonuçları karar vermeden önce kaynak dosyada doğrulayın.
+
 ---
 
 ## Kurulum
