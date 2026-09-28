@@ -186,14 +186,18 @@ def _block_ci(fn: Any, days: np.ndarray, n: int = 1000, seed: int = 7) -> list[f
     return [round(float(np.percentile(vals, 2.5)), 4), round(float(np.percentile(vals, 97.5)), 4)]
 
 
-def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0, block_days: int = 7) -> dict[str, Any]:
-    """Operations, arm B (trade_success vs paper outcomes) and arm C (direction_h vs realised moves).
-    CIs resample calendar blocks of ``block_days`` (7, as the slow A0 arm): 24-48 h targets overlap
-    neighbouring days and regimes persist, so day blocks would understate the uncertainty."""
+def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0, block_days: int = 7,
+               schema: str = STATE_SCHEMA) -> dict[str, Any]:
+    """Operations (every answer: cost, latency, errors), arm B (trade_success vs paper outcomes) and arm C
+    (direction_h vs realised moves). B and C count only answers to states of ``schema``, so a state
+    revision never mixes into the evaluation. CIs resample calendar blocks of ``block_days`` (7, as the
+    slow A0 arm): 24-48 h targets overlap neighbouring days and regimes persist."""
     state_dir = Path(state_dir)
     led = read_jsonl(state_dir / "jev.jsonl")
     runs = [r for r in led if r.get("kind") == "run"]
     judg = [r for r in led if r.get("kind") == "judgment"]
+    asked = {(r["question"], r["id"]): r.get("state", {}).get("schema") for r in led if r.get("kind") == "ask"}
+    judg_eval = [r for r in judg if asked.get((r["question"], r["id"])) == schema]
     lat = [r["latency_ms"] for r in judg if r.get("status") == "ok" and r.get("latency_ms") is not None]
     status: dict[str, int] = {}
     for r in judg:
@@ -204,8 +208,9 @@ def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0,
         tokens["input"] += int(u.get("input_tokens") or 0)
         tokens["output"] += int(u.get("output_tokens") or 0)
     rep: dict[str, Any] = {
-        "runs": [{k: r.get(k) for k in ("at", "model_requested", "pinning", "questionset", "prompt_hash")}
-                 for r in runs],
+        "runs": [{k: r.get(k) for k in ("at", "model_requested", "pinning", "questionset", "prompt_hash",
+                                        "state_schema")} for r in runs],
+        "state_schema_evaluated": schema, "judgments_other_schema": len(judg) - len(judg_eval),
         "models_returned": sorted({r.get("model_returned") for r in judg if r.get("model_returned")}),
         "status": status, "tokens": tokens,
         "latency_ms_p50": float(np.percentile(lat, 50)) if lat else None,
@@ -215,7 +220,7 @@ def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0,
     }
     # arm B
     outcomes = {o["id"]: o for o in read_jsonl(state_dir / "outcomes.jsonl") if o.get("exit_type") in ("TP", "SL", "TIME")}
-    ts = [(r, outcomes[r["id"]]) for r in judg if r["question"] == "trade_success" and r.get("status") == "ok"
+    ts = [(r, outcomes[r["id"]]) for r in judg_eval if r["question"] == "trade_success" and r.get("status") == "ok"
           and not r.get("late") and r["id"] in outcomes]
     b: dict[str, Any] = {"n": len(ts)}
     if len(ts) >= 2:
@@ -235,7 +240,7 @@ def jev_report(state_dir: Path, signal_min: float = 0.2, cost_bps: float = 12.0,
     # arm C
     opens = {r["id"]: r for r in led if r.get("kind") == "dir_open"}
     douts = {r["id"]: r for r in led if r.get("kind") == "dir_outcome" and r.get("status") == "ok"}
-    dj = [(r, opens[r["id"]], douts[r["id"]]) for r in judg if r["question"] == "direction_h"
+    dj = [(r, opens[r["id"]], douts[r["id"]]) for r in judg_eval if r["question"] == "direction_h"
           and r.get("status") == "ok" and r["id"] in douts and r["id"] in opens]
     c: dict[str, Any] = {"n": len(dj)}
     if len(dj) >= 2:

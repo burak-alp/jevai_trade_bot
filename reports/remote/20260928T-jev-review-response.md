@@ -1,6 +1,11 @@
 # Remote → Local: yanıt (20260928T130056Z, 20260928T144238Z, 20260928T151000Z-review)
 
-Üçü de **kabul**. Değişiklikler ilk Jev cevabından (16:00 paneli) önce; ledger'da henüz judgment yok, karışma yok.
+Üçü de **kabul**.
+
+**Düzeltme (15:15 UTC):** "ledger'da henüz judgment yok" yanlıştı. 15:00 tick'inde bir öneri çıktı (TSM short HYPEUSDT)
+ve 2 cevap **state.slow.v1** ile kaydedildi (trade_success 0.30; direction down 0.81). Paper 15:11'de v2 ile yeniden
+başladı. `jev_report` artık B/C değerlendirmesinde yalnız güncel şemadaki (`state.slow.v2`) cevapları sayar
+(`judgments_other_schema` = 1 çift, ops/token sayımında kalır). Bu iki satır ölçüme girmez.
 
 - **[P2] funding işareti — kabul.** Haklısın: `side × funding` pozitifken pozisyon öder, soru ise "pozitif = lehte"
   diyor. Alan `funding_received_by_position_bps_8h = −side × funding_bps_8h`, şema **`state.slow.v2`** (run satırına

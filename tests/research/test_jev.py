@@ -158,3 +158,23 @@ def test_shadow_on_paper_engine_end_to_end(tmp_path):
     b, c = rep["arm_B_trade_success"], rep["arm_C_direction"]
     assert b["n"] > 0 and 0.0 <= b["mean_p"] <= 1.0
     assert c["n"] > 0 and set(c["base_rates"]) == {"up", "flat", "down"}
+
+
+def test_report_evaluates_only_the_current_state_schema(tmp_path):
+    from jevbot.paper.engine import _append
+    d = tmp_path / "paper"
+    old = {"kind": "ask", "question": "direction_h", "id": "a", "t_tick": START, "state": {"schema": "state.slow.v1"}}
+    new = {"kind": "ask", "question": "direction_h", "id": "b", "t_tick": START, "state": {"schema": "state.slow.v2"}}
+    rows = [old, new]
+    for i, up in (("a", 0.9), ("b", 0.2)):
+        rows.append({"kind": "dir_open", "id": i, "symbol": "S0USDT", "t_tick": START, "close": 1.0, "atr_pct": 0.01,
+                     "horizon_min": 1440, "band_atr": 2.45, "source": "panel"})
+        rows.append({"kind": "judgment", "question": "direction_h", "id": i, "t_tick": START, "status": "ok",
+                     "latency_ms": 500, "probs": {"direction_h.up": up, "direction_h.flat": 0.1,
+                                                  "direction_h.down": 0.9 - up}})
+        rows.append({"kind": "dir_outcome", "id": i, "status": "ok", "ret_atr": 3.0, "ret_bps": 300.0, "y": "up"})
+    _append(d / "jev.jsonl", rows)
+    rep = jev_report(d)
+    assert rep["state_schema_evaluated"] == "state.slow.v2" and rep["judgments_other_schema"] == 1
+    assert rep["status"] == {"direction_h:ok": 2}                  # operations count every answer
+    assert rep["arm_C_direction"]["n"] == 1                        # evaluation only the v2 one
