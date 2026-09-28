@@ -152,6 +152,8 @@ def cmd_research_drift(args: argparse.Namespace) -> int:
 def cmd_paper(args: argparse.Namespace) -> int:
     from pathlib import Path
 
+    import asyncio
+
     from jevbot.marketdata.binance_rest import BinanceRest
     from jevbot.paper.engine import PaperConfig, PaperEngine
     from jevbot.paper.source import RestSource
@@ -164,11 +166,16 @@ def cmd_paper(args: argparse.Namespace) -> int:
         try:
             eng = PaperEngine(RestSource(rest), PaperConfig(state_dir=state))
             sys.stdout.write(f"paper: config {eng.hash}, state {state}\n")
-            if args.once:
+            if args.once:                                   # wait for the next hour close, decide it, settle
                 import time
                 now = int(time.time() * 1000)
-                await eng.step(now - now % 3_600_000)
-                await eng.settle(now)
+                t_tick = now - now % 3_600_000 + 3_600_000
+                wait = (t_tick - now) / 1000 + eng.cfg.tick_delay_s
+                sys.stdout.write(f"waiting {wait:.0f} s for the {t_tick} tick\n")
+                await asyncio.sleep(wait)
+                rows = await eng.step(t_tick)
+                await eng.settle(int(time.time() * 1000))
+                sys.stdout.write(f"tick {t_tick}: {len(rows)} decisions\n")
             else:
                 await eng.run()
             return 0
@@ -343,10 +350,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("paper", help="locked prospective paper test of the slow families (public REST, no orders)")
     _add_common(p)
     p.add_argument("--state-dir", default=None, help="ledger directory (default: <run_dir>/paper)")
-    p.add_argument("--once", action="store_true", help="decide the last closed hour and settle, then exit")
+    p.add_argument("--once", action="store_true", help="wait for the next hour close, decide it, settle, exit")
     p.set_defaults(func=cmd_paper)
 
-    p = sub.add_parser("paper-report", help="paper ledger stats per config hash (7-day block CIs)")
+    p = sub.add_parser("paper-report", help="paper ledger counts; R stats only after the 6 week / 40 trade gate")
     _add_common(p)
     p.add_argument("--state-dir", default=None, help="ledger directory (default: <run_dir>/paper)")
     p.set_defaults(func=cmd_paper_report)

@@ -42,10 +42,14 @@ class PaperConfig:
     window_days: int = 40                # hourly history per decision (EMA200/Donchian/ATR warm-up)
     settle_delay_min: int = 10           # wait after the horizon before settling (bars final)
     tick_delay_s: float = 20.0           # wait after the hour so the closed bar is served
+    max_late_s: float = 300.0            # a tick started later than this is recorded as skipped, never decided
+    gate_days: int = 42                  # pre-registered: no R statistics before 6 weeks ...
+    gate_n: int = 40                     # ... and 40 settled trades per family x side
 
     def config_hash(self) -> str:
         doc = {"slow": self.slow.to_dict(), "tradable_top": self.tradable_top, "pool": self.pool,
-               "window_days": self.window_days, "schema": SLOW_SCHEMA, "labels": LABEL_VERSION}
+               "window_days": self.window_days, "max_late_s": self.max_late_s, "schema": SLOW_SCHEMA,
+               "labels": LABEL_VERSION, "entry": "first full minute after the ledger write"}
         return hashlib.sha256(orjson.dumps(doc, option=orjson.OPT_SORT_KEYS)).hexdigest()[:16]
 
 
@@ -86,8 +90,9 @@ def _git_sha() -> str:
 
 
 class PaperEngine:
-    def __init__(self, src: MarketSource, cfg: PaperConfig) -> None:
+    def __init__(self, src: MarketSource, cfg: PaperConfig, clock: Any = None) -> None:
         self.src, self.cfg = src, cfg
+        self.clock = clock or (lambda: int(time.time() * 1000))
         self.decisions = Path(cfg.state_dir) / "decisions.jsonl"
         self.outcomes = Path(cfg.state_dir) / "outcomes.jsonl"
         self.hash = cfg.config_hash()
@@ -119,22 +124,38 @@ class PaperEngine:
         return [p for p in scan_slow(feats, self.cfg.slow, self.cfg.tradable_top) if p["t_decision"] == t_tick]
 
     async def step(self, t_tick: int) -> list[dict[str, Any]]:
-        """Decide and record one tick (idempotent across restarts)."""
+        """Decide and record one tick (idempotent across restarts).
+
+        Point in time: a tick is decided only if we are within ``max_late_s`` of it (otherwise the
+        candidate universe and the data would come from after the tick); late ticks are recorded as
+        skipped. Execution: the entry is the first full minute *after* the decision is on disk
+        (``t_entry``); settlement fills there, not at the tick.
+        """
         if t_tick <= self.last_tick:
             return []
+        if self.clock() - t_tick > self.cfg.max_late_s * 1000:
+            _append(self.decisions, [{"kind": "tick", "t_tick": t_tick, "skipped": "late",
+                                      "at": self.clock(), "config_hash": self.hash}])
+            self.last_tick = t_tick
+            log.warning("paper_tick_skipped_late", t_tick=t_tick)
+            return []
         props = await self.decide(t_tick)
-        now = int(time.time() * 1000)
         rows = []
         for p in props:
             p = dict(p)
             p["id"] = hashlib.sha256(f"{p['family']}|{p['symbol']}|{p['side']}|{t_tick}".encode()).hexdigest()[:16]
-            p.update(kind="decision", decided_at=now, config_hash=self.hash, git_sha=self.sha,
+            p.update(kind="decision", config_hash=self.hash, git_sha=self.sha,
                      live_spread_bps=await self.src.spread_bps(p["symbol"]))
             rows.append(p)
-        rows.append({"kind": "tick", "t_tick": t_tick, "decided_at": now, "n": len(props), "config_hash": self.hash})
+        decided_at = self.clock()                            # all inputs fetched; written right below
+        t_entry = decided_at - decided_at % MIN + MIN        # first full minute after the write
+        for p in rows:
+            p.update(decided_at=decided_at, t_entry=t_entry)
+        rows.append({"kind": "tick", "t_tick": t_tick, "decided_at": decided_at, "n": len(props),
+                     "config_hash": self.hash})
         _append(self.decisions, rows)
         self.last_tick = t_tick
-        log.info("paper_tick", t_tick=t_tick, proposals=len(props))
+        log.info("paper_tick", t_tick=t_tick, proposals=len(props), entry_delay_s=(t_entry - t_tick) / 1000)
         return rows[:-1]
 
     async def settle(self, now: int) -> list[dict[str, Any]]:
@@ -143,12 +164,13 @@ class PaperEngine:
         for p in read_jsonl(self.decisions):
             if p.get("kind") != "decision" or p["id"] in done:
                 continue
-            t_end = p["t_decision"] + (p["horizon_min"] + self.cfg.settle_delay_min) * MIN
+            t0 = p["t_entry"]                                # fill at the open of the entry minute
+            t_end = t0 + (p["horizon_min"] + self.cfg.settle_delay_min) * MIN
             if t_end > now:
                 continue
-            b = await self.src.minute_bars(p["symbol"], p["t_decision"], p["t_decision"] + (p["horizon_min"] + 1) * MIN)
-            fund = await self.src.funding(p["symbol"], p["t_decision"] - DAY, t_end)
-            lab = label_one(p, b, fund, self.cfg.slow.cost)
+            b = await self.src.minute_bars(p["symbol"], t0, t0 + (p["horizon_min"] + 1) * MIN)
+            fund = await self.src.funding(p["symbol"], t0 - DAY, t_end)
+            lab = label_one({**p, "t_decision": t0}, b, fund, self.cfg.slow.cost)
             out.append({"id": p["id"], "config_hash": p["config_hash"], "settled_at": now, **lab})
         if out:
             _append(self.outcomes, out)
@@ -157,9 +179,9 @@ class PaperEngine:
 
     async def run(self, stop: asyncio.Event | None = None) -> None:
         stop = stop or asyncio.Event()
-        await self.settle(int(time.time() * 1000))
+        await self.settle(self.clock())
         while not stop.is_set():
-            now = int(time.time() * 1000)
+            now = self.clock()
             t_tick = now - now % HOUR
             if t_tick <= self.last_tick:
                 wait = (t_tick + HOUR - now) / 1000 + self.cfg.tick_delay_s
@@ -171,15 +193,21 @@ class PaperEngine:
                 continue
             try:
                 await self.step(t_tick)
-                await self.settle(int(time.time() * 1000))
+                await self.settle(self.clock())
             except Exception:
                 log.exception("paper_step_failed", t_tick=t_tick)
                 await asyncio.sleep(60)
 
 
-def paper_report(state_dir: Path, bootstrap: int = 2000) -> dict[str, Any]:
-    decisions = {r["id"]: r for r in read_jsonl(Path(state_dir) / "decisions.jsonl") if r.get("kind") == "decision"}
-    ticks = [r for r in read_jsonl(Path(state_dir) / "decisions.jsonl") if r.get("kind") == "tick"]
+def paper_report(state_dir: Path, bootstrap: int = 2000, gate_days: int = 42, gate_n: int = 40) -> dict[str, Any]:
+    """Counts always; R statistics for a family x side only after the pre-registered gate
+    (``gate_days`` since the first decided tick and ``gate_n`` settled trades). Before that the
+    group is blinded, so nobody can peek and stop or tweak early."""
+    ledger = read_jsonl(Path(state_dir) / "decisions.jsonl")
+    decisions = {r["id"]: r for r in ledger if r.get("kind") == "decision"}
+    ticks = [r for r in ledger if r.get("kind") == "tick"]
+    decided = [r["t_tick"] for r in ticks if not r.get("skipped")]
+    span_days = (max(decided) - min(decided)) / DAY if decided else 0.0
     rows_by_hash: dict[str, list[dict[str, Any]]] = {}
     for o in read_jsonl(Path(state_dir) / "outcomes.jsonl"):
         d = decisions.get(o["id"])
@@ -189,14 +217,24 @@ def paper_report(state_dir: Path, bootstrap: int = 2000) -> dict[str, Any]:
     from datetime import date
     cfg = A0Config(hist_root=Path("."), symbols=[], start=date.today(), end=date.today(), arm_kind="slow",
                    bootstrap=bootstrap)
-    rep: dict[str, Any] = {"ticks": len(ticks), "decisions": len(decisions), "by_config": {}}
+
+    def stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        if span_days >= gate_days and len(rows) >= gate_n:
+            return group_stats(rows, cfg)
+        return {"n": len(rows), "blinded": True}
+
+    rep: dict[str, Any] = {"ticks_decided": len(decided), "ticks_skipped": len(ticks) - len(decided),
+                           "decisions": len(decisions), "span_days": round(span_days, 2),
+                           "gate": {"days": gate_days, "n": gate_n}, "by_config": {}}
     for h, rows in rows_by_hash.items():
-        groups = {"all": group_stats(rows, cfg)}
+        groups = {"all": stats(rows)}
         for fam in sorted({r["family"] for r in rows}):
             for side, nm in ((1, "long"), (-1, "short")):
-                groups[f"{fam}_{nm}"] = group_stats([r for r in rows if r["family"] == fam and r["side"] == side], cfg)
+                groups[f"{fam}_{nm}"] = stats([r for r in rows if r["family"] == fam and r["side"] == side])
         spreads = [r["live_spread_bps"] for r in rows if r.get("live_spread_bps") is not None]
+        delays = [(r["t_entry"] - r["t_decision"]) / 1000 for r in rows if r.get("t_entry")]
         rep["by_config"][h] = {"settled": len(rows), "groups": groups,
                                "live_spread_bps_median": float(np.median(spreads)) if spreads else None,
-                               "model_spread_bps_median": float(np.median([r["spread_bps"] for r in rows]))}
+                               "model_spread_bps_median": float(np.median([r["spread_bps"] for r in rows])),
+                               "entry_delay_s_median": float(np.median(delays)) if delays else None}
     return rep

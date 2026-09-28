@@ -32,11 +32,13 @@ def test_paper_decisions_equal_replay_and_ledger_is_idempotent(tmp_path):
     replay = _replay(hist)
     ticks = sorted({START + 12 * DAY + h * HOUR for h in range(1, 25)} | {START + d * DAY for d in range(13, DAYS)})
     cfg = PaperConfig(state_dir=tmp_path / "paper", slow=LOOSE, tradable_top=6, pool=len(SYMS), window_days=DAYS + 2)
-    eng = PaperEngine(HistSource(hist, SYMS, LISTING), cfg)
+    now = {"t": 0}
+    eng = PaperEngine(HistSource(hist, SYMS, LISTING), cfg, clock=lambda: now["t"])
 
     async def go():
         got = []
         for t in ticks:
+            now["t"] = t + 30_000                            # on time: 30 s after the bar close
             got += await eng.step(t)
         again = await eng.step(ticks[-1])                    # restart-safe: a recorded tick is not redone
         settled = await eng.settle(START + (DAYS + 5) * DAY)
@@ -53,18 +55,35 @@ def test_paper_decisions_equal_replay_and_ledger_is_idempotent(tmp_path):
     assert len(read_jsonl(cfg.state_dir / "decisions.jsonl")) == len(got) + len(ticks)
 
     by_id = {o["id"]: o for o in settled}
-    for p in got:                                            # settlement = the replay's labeler on 1m + mark
+    for p in got:                          # settlement = the replay's labeler, filled at the entry minute
+        assert p["t_entry"] == p["t_decision"] + MIN and p["decided_at"] < p["t_entry"]
         o = by_id[p["id"]]
         b = load_symbol(hist, p["symbol"], START, START + DAYS * DAY)
-        ref = label_one(p, b, load_funding(hist, p["symbol"]), LOOSE.cost)
+        ref = label_one({**p, "t_decision": p["t_entry"]}, b, load_funding(hist, p["symbol"]), LOOSE.cost)
         if ref["exit_type"] in ("TP", "SL", "TIME"):
             assert o["exit_type"] == ref["exit_type"] and np.isclose(o["net_r"], ref["net_r"])
         else:
             assert o["exit_type"] in ("out_of_range", "data_gap")
 
-    rep = paper_report(cfg.state_dir, bootstrap=50)
+    rep = paper_report(cfg.state_dir, bootstrap=50)          # default gate: 6 weeks -> everything blinded
     (h, r), = rep["by_config"].items()
-    assert h == eng.hash and r["settled"] > 0 and "all" in r["groups"]
+    assert h == eng.hash and r["settled"] > 0
+    assert all(g.get("blinded") and set(g) == {"n", "blinded"} for g in r["groups"].values())
+    open_rep = paper_report(cfg.state_dir, bootstrap=50, gate_days=5, gate_n=1)
+    assert "mean_net_r" in next(iter(open_rep["by_config"].values()))["groups"]["all"]
+
+
+def test_late_tick_is_skipped_not_decided(tmp_path):
+    hist = tmp_path / "hist"
+    _world(hist, n=2)
+    cfg = PaperConfig(state_dir=tmp_path / "paper", slow=LOOSE, tradable_top=3, pool=3, window_days=DAYS + 2)
+    t = START + 13 * DAY
+    late = lambda: t + 46 * MIN                              # noqa: E731  (started 46 min after the tick)
+    eng = PaperEngine(HistSource(hist, SYMS[:3], LISTING), cfg, clock=late)
+    assert asyncio.run(eng.step(t)) == []
+    (row,) = read_jsonl(cfg.state_dir / "decisions.jsonl")
+    assert row["kind"] == "tick" and row["skipped"] == "late"
+    assert paper_report(cfg.state_dir)["ticks_skipped"] == 1
 
 
 def test_config_hash_locks_parameters(tmp_path):
