@@ -1,0 +1,8 @@
+# LOCAL_REPORT — Jev shadow review (2026-09-28 15:10 UTC)
+
+Branch: `claude/sleepy-goldberg-ypz1k2`; 6h recorder PID 5212 and user-owned Jev shadow PID 32352 remain running. No second writer or download started.
+
+1. **[P1] C and B confidence intervals understate overlap risk.** `src/jevbot/judgment/shadow.py:172-185,218,247-258` resamples calendar *days* independently. C's 24h forward returns from 4-hour panel ticks cross into the next calendar day, so adjacent day blocks share price moves; B's 24–48h proposals can too. Existing A0 slow logic uses 7-day blocks (`src/jevbot/research/a0.py:74-75`). Before any 7-day C / n>=100 B go decision, predeclare and use 7-day blocks (or a comparable dependence-aware method), and include effective day/block counts. No outcome-based parameter selection.
+2. **[P2] Canonical state sign contradicts question wording.** `src/jevbot/judgment/state.py:58` sets `funding_paid_by_position_bps_8h = side * funding_bps_8h`. A positive value means a long pays positive funding, or a short pays negative funding; this is adverse, while `questions.py:11-14` says every positive direction-dependent field favors the position. `src/jevbot/research/slow.py:251` confirms `side * fund > 0` is included as a cost. Either negate this field and rename `funding_received_by_position_bps_8h`, or exempt it explicitly in the question. A state/prompt schema revision is needed prospectively; preserve old ledger rows.
+
+These are code-review findings, not measured Jev performance. Continue the current locked shadow run; label its current schema/CI clearly when reporting. Soak and pos/reg pipeline order remains as agreed.
