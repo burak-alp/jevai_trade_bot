@@ -56,11 +56,22 @@ def test_universe_rules_and_hysteresis():
 
 def test_book_ticker_max_symbols_limits_streams(tmp_path):
     from jevbot.recorder.recorder import Recorder
+    cfg = load_config(["config/base.yaml"], [f"data_dir={tmp_path}", f"run_dir={tmp_path}",
+                                             "recorder.book_ticker_max_symbols=30"])
+    rec = Recorder(cfg)
+    rec.members = [f"S{i}USDT" for i in range(150)]
+    streams = rec._desired_streams()
+    assert sum(s.endswith("@bookTicker") for s in streams) == 30
+    assert sum(s.endswith("@kline_1m") for s in streams) == 150
+
+
+def test_home_profile_has_no_book_ticker_and_wider_depth(tmp_path):
+    from jevbot.recorder.recorder import Recorder
     cfg = load_config(["config/base.yaml", "config/home.yaml"], [f"data_dir={tmp_path}", f"run_dir={tmp_path}"])
     rec = Recorder(cfg)
     rec.members = [f"S{i}USDT" for i in range(150)]
     streams = rec._desired_streams()
-    assert 0 < cfg.recorder.book_ticker_max_symbols < len(rec.members)
-    assert sum(s.endswith("@bookTicker") for s in streams) == cfg.recorder.book_ticker_max_symbols
+    assert cfg.recorder.book_ticker is False and not any(s.endswith("@bookTicker") for s in streams)
+    assert cfg.recorder.depth.enabled and cfg.recorder.depth.top_n_by_volume == 30   # depth set at universe refresh
     assert sum(s.endswith("@kline_1m") for s in streams) == 150
     assert cfg.binance.ws.compression is True

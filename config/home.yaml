@@ -10,6 +10,11 @@ binance:
       bookTicker: 15
       depth: 50
 recorder:
-  book_ticker_max_symbols: 30       # 100 stalled, 50 dropped ~80/h in the 24 h soak -> 30 (2 x 15 per socket)
+  # bookTicker off (2026-09-28): 6 h soak 20260928T120050Z, the top-15 bookTicker socket (~2,200 msg/s on one
+  # flow) dropped ~140/h and burst at the 13:30 UTC US open (124 drops in 20 min) while depth / market sockets
+  # stayed within <= 3/h; CPU 29 %, loop lag <= 13 ms -> the single heavy flow, not the PC. No active hypothesis
+  # (slow/pos/reg, Jev shadow) needs tick-level quotes; spread comes from depth top-of-book instead.
+  book_ticker: false
+  book_ticker_max_symbols: 30       # only used if book_ticker is switched back on
   depth:
-    top_n_by_volume: 10
+    top_n_by_volume: 30             # 20 levels @500ms, sampled every 5 s: best bid/ask for spread (was 10)
