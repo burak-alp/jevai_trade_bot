@@ -136,6 +136,19 @@ def cmd_research_a0(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_research_drift(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.research.drift import run_drift, to_markdown
+
+    cfg = _load(args)
+    hist = Path(args.hist) if args.hist else Path(cfg.data_dir) / "hist" / "um"
+    out = Path(args.out) if args.out else Path(args.proposals).parent
+    s = run_drift(Path(args.proposals), hist, out, selected_only=not args.all)
+    sys.stdout.write(to_markdown(s))
+    return 0
+
+
 def cmd_universe_pool(args: argparse.Namespace) -> int:
     from datetime import date
     from pathlib import Path
@@ -277,6 +290,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--chunk-days", type=int, default=30, help="time chunk (bounded memory; 30 d warm-up each)")
     p.add_argument("--out", default=None, help="output dir (default: <data_dir>/research/a0-<ts>)")
     p.set_defaults(func=cmd_research_a0)
+
+    p = sub.add_parser("research-drift", help="signal decay: gross forward R of A0 proposals at 15 m .. 48 h")
+    _add_common(p)
+    p.add_argument("--proposals", required=True, help="proposals.parquet from research-a0")
+    p.add_argument("--hist", default=None, help="historical root (default: <data_dir>/hist/um)")
+    p.add_argument("--out", default=None, help="output dir (default: next to the proposals)")
+    p.add_argument("--all", action="store_true", help="all proposals, not only the selected ones")
+    p.set_defaults(func=cmd_research_drift)
 
     p = sub.add_parser("universe-pool", help="symbols to download so every day's top-N (by prior-day 1d quote "
                                              "volume, delisted included) is present for replay")
