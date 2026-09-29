@@ -5,9 +5,8 @@ Usage: python scripts/tradfi_gap.py
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import numpy as np
 import orjson
@@ -17,7 +16,6 @@ from jevbot.research.data import DAY, MIN, load_symbol
 from jevbot.research.universe import pit_first_listing
 
 HIST = Path("data/hist/um")
-NY = ZoneInfo("America/New_York")
 EXCLUDE = {"XAUUSDT", "XAGUSDT", "XPDUSDT", "XPTUSDT", "PAXGUSDT", "COPPERUSDT", "NATGASUSDT"}
 HOLIDAYS = {date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3), date(2026, 5, 25),
             date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7)}
@@ -26,7 +24,9 @@ THR, COST = 0.005, 0.0020
 
 
 def ms(d: date, t: time) -> int:
-    return int(datetime.combine(d, t, NY).timestamp() * 1000)
+    """New York wall time -> UTC ms (2026 DST: 8 Mar - 1 Nov = UTC-4, else UTC-5; Windows lacks tzdata)."""
+    off = 4 if date(2026, 3, 8) <= d < date(2026, 11, 1) else 5
+    return int((datetime.combine(d, t, timezone.utc) + timedelta(hours=off)).timestamp() * 1000)
 
 
 def main() -> None:
@@ -35,7 +35,7 @@ def main() -> None:
     listing = pit_first_listing(HIST)
     days = [START + timedelta(days=i) for i in range((END - START).days + 1)]
     tdays = [d for d in days if d.weekday() < 5 and d not in HOLIDAYS]
-    g0 = int(datetime(2026, 1, 20).timestamp() // 86400 * DAY)
+    g0 = int(datetime(2026, 1, 20, tzinfo=timezone.utc).timestamp() * 1000)
     g1 = g0 + 260 * DAY
     rows = []
     for s in syms:
