@@ -37,7 +37,7 @@ Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, 
 
 ## Recorder
 6 h soak NO-GO (bookTicker ~140 kopma/saat, 13:30 ABD açılışı). `config/home.yaml`: bookTicker kapalı, depth top-30.
-Sonraki koşu yeni profille, aynı kriterler.
+Yeni profil 6 h soak (2026-09-29) 9/9 GEÇTİ: 4 kopma, 0 eksik kline, CPU %7 → recorder GO (yalnız araştırma verisi).
 
 ## Kurallar
 Gerçek emir/Binance key yok. `data/ run/ logs/` commit edilmez. Sonuç uydurma yok. Kararlar önce kayıt, sonra koşu.
