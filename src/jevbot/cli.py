@@ -198,6 +198,10 @@ def cmd_paper(args: argparse.Namespace) -> int:
                 from jevbot.llmtrader import LlmTrader
                 hooks.append(LlmTrader(state, src, jev=jev, jev_model=model))
                 sys.stdout.write("llm.v1 trader: on (weekdays 14:00 UTC)\n")
+            if args.jev_shadow:                             # unified virtual account + Telegram, 18:00 UTC daily
+                from jevbot.account import DailyAccountReport
+                hooks.append(DailyAccountReport(state))
+                sys.stdout.write("virtual account report: daily 21:00 Turkey time\n")
             eng = PaperEngine(src, PaperConfig(state_dir=state), shadow=shadow, hooks=hooks)
             sys.stdout.write(f"paper: config {eng.hash}, state {state}\n")
             if args.once:                                   # wait for the next hour close, decide it, settle
@@ -273,6 +277,19 @@ def cmd_llm_report(args: argparse.Namespace) -> int:
     from jevbot.llmtrader import llm_report
 
     sys.stdout.write(orjson.dumps(llm_report(Path(args.state_dir)), option=orjson.OPT_INDENT_2).decode() + "\n")
+    return 0
+
+
+def cmd_jev_account(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.account import account_report, send_telegram, to_text
+
+    text = to_text(account_report(Path(args.state_dir)))
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.write(text + "\n")
+    if args.telegram:
+        sys.stdout.write(f"telegram: {_run_async(lambda: send_telegram(text))}\n")
     return 0
 
 
@@ -496,6 +513,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--arm", required=True)
     p.add_argument("--file", required=True, help='{"t_decision": ms, "model": str, "symbols": {"NVDA": {"up":..,"flat":..,"down":..,"reason":..}}}')
     p.set_defaults(func=cmd_llm_record)
+
+    p = sub.add_parser("jev-account", help="unified virtual account (Jev crypto + US stocks vs always-long / random)")
+    p.add_argument("--state-dir", default="run/paper-jev")
+    p.add_argument("--telegram", action="store_true", help="also send it (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
+    p.set_defaults(func=cmd_jev_account)
 
     p = sub.add_parser("llm-report", help="llm.v1: per-arm settled trades, net bps, AUC")
     p.add_argument("--state-dir", default="run/paper-jev")
