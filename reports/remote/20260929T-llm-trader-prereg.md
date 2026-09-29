@@ -21,3 +21,8 @@ serbest metin koşulları uygulanmadı, kota çağrıları düşürdü, fiyat ba
   geçer **ve** AUC CI alt > 0.5. GO → küçük gerçek sermaye (kod belirler kaldıracı), ayrı ön kayıt.
 - Kayıp kabul: kullanıcı aylık dalgalanmayı (−%20 / +%300) kabul ediyor; kriter tek ayın değil toplamın kârlı olması.
 - İstem/bağlam değişirse sürüm artar (`llm.v2`), sayaçlar sıfırlanır.
+
+## Ek (2026-09-29 20:30 TR, sonuç görülmeden): Claude istemi v2
+İlk gün (29.09) Claude v1 12/12 sembolde |skor| < 0.2 → işlem yok (Astra "hep CASH" tekrarı). Neden: istemdeki "emin değilsen
+flat'e ağırlık ver" cümlesi. Kullanıcı onayıyla istem kalibrasyon yönergesiyle değişti; kol adı **claude.v2** (v1'in tek günü ayrı
+kol olarak kalır, v2 sayacı 30.09'da başlar). Jev, always_long, random ve bağlam değişmedi. Karar kuralı aynı.
