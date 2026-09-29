@@ -27,6 +27,8 @@ Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, 
   --jev-base-url https://jev-ai.pro/api`; model `jev-1.13.0`; config `314c11b6a1e1727b`; state `state.slow.v2`.
   Uygulama terminalinde çalıştırma (uygulama kapanınca ölür). `jev-ai.pro` çağrılarını yalnız kullanıcı başlatır.
 - Jev soruları: B `trade_success` (her öneri), C `direction_h` 24 h (top-30, 4 saatte bir), `btc_regime_7d` (günde 1).
+- **llm.v1 (ABD hisse perp, Jev vs Claude):** paper sürecinin hook'u, hafta içi 14:00 UTC bağlam + Jev; Claude kolu zamanlanmış
+  görev `jevai-llm-claude-arm` (17:08 TR) → `jevbot llm-record`. Referanslar: always_long, random. Rapor: `jevbot llm-report`.
 
 ## Karar takvimi (Türkiye saati; ön kayıtlı)
 - C: 1. gün bilgi (29.09 19:10), 7. gün futility, ≥ 28 gün GO (AUC CI alt > 0.5 ve sinyal net CI alt > 0; 7 g blok).

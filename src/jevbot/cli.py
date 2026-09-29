@@ -192,7 +192,13 @@ def cmd_paper(args: argparse.Namespace) -> int:
                 shadow = JevShadow(jev, state, panel_top=args.jev_panel_top)
                 model = await shadow.start(int(_t.time() * 1000))
                 sys.stdout.write(f"jev shadow: model {model}\n")
-            eng = PaperEngine(RestSource(rest), PaperConfig(state_dir=state), shadow=shadow)
+            src = RestSource(rest)
+            hooks = []
+            if args.jev_shadow and not args.no_llm:         # llm.v1: Jev arm + context file for the Claude arm
+                from jevbot.llmtrader import LlmTrader
+                hooks.append(LlmTrader(state, src, jev=jev, jev_model=model))
+                sys.stdout.write("llm.v1 trader: on (weekdays 14:00 UTC)\n")
+            eng = PaperEngine(src, PaperConfig(state_dir=state), shadow=shadow, hooks=hooks)
             sys.stdout.write(f"paper: config {eng.hash}, state {state}\n")
             if args.once:                                   # wait for the next hour close, decide it, settle
                 import time
@@ -245,6 +251,29 @@ def cmd_jev_check(args: argparse.Namespace) -> int:
         finally:
             await jev.aclose()
     return _run_async(main)
+
+
+def cmd_llm_record(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.llmtrader import LlmTrader
+
+    doc = orjson.loads(Path(args.file).read_bytes())
+    syms = doc.get("symbols", {})
+    rows = LlmTrader(Path(args.state_dir), src=None).record(
+        args.arm, int(doc["t_decision"]), {k: v for k, v in syms.items()},
+        {k: str(v.get("reason", "")) for k, v in syms.items()}, model=doc.get("model"))
+    sys.stdout.write(f"recorded {len(rows)} of {len(syms)} ({args.arm})\n")
+    return 0 if rows or not syms else 9
+
+
+def cmd_llm_report(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.llmtrader import llm_report
+
+    sys.stdout.write(orjson.dumps(llm_report(Path(args.state_dir)), option=orjson.OPT_INDENT_2).decode() + "\n")
+    return 0
 
 
 def cmd_jev_report(args: argparse.Namespace) -> int:
@@ -459,7 +488,18 @@ def build_parser() -> argparse.ArgumentParser:
                         "panel; answers go to <state>/jev.jsonl and never change a decision")
     p.add_argument("--jev-base-url", default="https://api.typesafe.ai")
     p.add_argument("--jev-panel-top", type=int, default=30, help="direction panel: top-N by 24 h quote volume")
+    p.add_argument("--no-llm", action="store_true", help="disable the llm.v1 US-stock trader hook")
     p.set_defaults(func=cmd_paper)
+
+    p = sub.add_parser("llm-record", help="llm.v1: record one arm's probabilities from a JSON file (Claude arm)")
+    p.add_argument("--state-dir", default="run/paper-jev")
+    p.add_argument("--arm", required=True)
+    p.add_argument("--file", required=True, help='{"t_decision": ms, "model": str, "symbols": {"NVDA": {"up":..,"flat":..,"down":..,"reason":..}}}')
+    p.set_defaults(func=cmd_llm_record)
+
+    p = sub.add_parser("llm-report", help="llm.v1: per-arm settled trades, net bps, AUC")
+    p.add_argument("--state-dir", default="run/paper-jev")
+    p.set_defaults(func=cmd_llm_report)
 
     p = sub.add_parser("jev-check", help="Jev reachability: list models, one sample judgment (no orders)")
     p.add_argument("--jev-base-url", default="https://api.typesafe.ai")

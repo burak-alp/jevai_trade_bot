@@ -93,8 +93,10 @@ def _git_sha() -> str:
 
 
 class PaperEngine:
-    def __init__(self, src: MarketSource, cfg: PaperConfig, clock: Any = None, shadow: Any = None) -> None:
+    def __init__(self, src: MarketSource, cfg: PaperConfig, clock: Any = None, shadow: Any = None,
+                 hooks: list[Any] | None = None) -> None:
         self.src, self.cfg, self.shadow = src, cfg, shadow
+        self.hooks = hooks or []                             # e.g. llm.v1 trader: on_tick(t) / settle(now)
         self._feats: dict[str, Any] | None = None
         self.clock = clock or (lambda: int(time.time() * 1000))
         self.decisions = Path(cfg.state_dir) / "decisions.jsonl"
@@ -167,6 +169,11 @@ class PaperEngine:
                 await self.shadow.on_tick(t_tick, t_entry, rows[:-1], self._feats)
             except Exception:
                 log.exception("jev_shadow_failed", t_tick=t_tick)
+        for h in self.hooks:                                 # after the ledger write, like the shadow
+            try:
+                await h.on_tick(t_tick)
+            except Exception:
+                log.exception("paper_hook_failed", hook=type(h).__name__, t_tick=t_tick)
         return rows[:-1]
 
     async def settle(self, now: int) -> list[dict[str, Any]]:
@@ -207,6 +214,8 @@ class PaperEngine:
                 await self.settle(self.clock())
                 if self.shadow is not None:
                     await self.shadow.settle(self.src, self.clock())
+                for h in self.hooks:
+                    await h.settle(self.clock())
             except Exception:
                 log.exception("paper_step_failed", t_tick=t_tick)
                 await asyncio.sleep(60)
