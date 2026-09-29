@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 
-from jevbot.account import MAX_POS, START_EQUITY, account_report, send_telegram, simulate, to_text, trades
+from jevbot.account import MAX_POS, SLOTS, START_EQUITY, account_report, send_telegram, simulate, to_text, trades
 from jevbot.paper.engine import _append
 
 DAY = 86_400_000
@@ -45,9 +45,10 @@ def test_trades_and_account(tmp_path):
 
 def test_open_until_settled_and_slot_cap():
     ts = [{"market": "crypto", "symbol": f"S{i}", "side": 1, "t_entry": T, "t_exit": T + DAY, "net": 0.01} for i in range(25)]
+    ts += [{"market": "stocks", "symbol": "NVDA", "side": 1, "t_entry": T + 1, "t_exit": T + DAY, "net": 0.02}]
     ts[0]["net"] = None
     s = simulate(ts, now=T + 2 * DAY)
-    assert s["trades"] == MAX_POS - 1 and len(s["open"]) == 1
+    assert s["trades"] == SLOTS["crypto"] - 1 + 1 and len(s["open"]) == 1 and s["stocks"] == 1   # stock not crowded out
 
 
 def test_telegram_not_configured_and_sent(monkeypatch):

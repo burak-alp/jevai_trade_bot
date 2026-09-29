@@ -21,7 +21,8 @@ from jevbot.judgment.state import STATE_SCHEMA
 from jevbot.paper.engine import read_jsonl
 
 START_EQUITY = 1000.0
-MAX_POS = 20
+SLOTS = {"crypto": 20, "stocks": 12}                    # per-market caps: crypto panels must not crowd out stocks
+MAX_POS = sum(SLOTS.values())                          # each position = equity / MAX_POS
 CRYPTO_COST = 0.0012
 SCORE_MIN = 0.2
 TR = timezone(timedelta(hours=3))
@@ -77,7 +78,7 @@ def simulate(ts: list[dict[str, Any]], now: int) -> dict[str, Any]:
             break
         tr = ts[i]
         if kind == 1:
-            if len(held) < MAX_POS:
+            if sum(ts[k]["market"] == tr["market"] for k in held) < SLOTS[tr["market"]]:
                 held[i] = equity / MAX_POS
         elif i in held:
             if tr["net"] is None:
