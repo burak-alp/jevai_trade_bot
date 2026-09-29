@@ -19,6 +19,7 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
 | carry.v1 seçici alt funding carry | 2024-01 → 2026-09 | +%1.0/yıl, h2 −%3.5 → geçmedi (maliyet funding'in %60'ı) |
 | carry.base BTC+ETH (referans) | aynı | +%4.9/yıl [4.0, 5.9], DD %0.4; h2 %2.7 — nakit "earn" faizi mertebesi |
 | hlp.v1 Hyperliquid kalıcılık | P1 Mar–May → P2 Haz–Ağu 2026 | yansız örneklemde Spearman +0.005; P1 kazananları P2 medyan −%95 → kopya yolu yok |
+| gap.v1 TradFi hisse perp gece/hafta sonu açığı | 2026-01 → 09, 36 hisse | eğim ≈ 0; geri dönüş −13 bps net → geçmedi (verimli) |
 Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, kiraz toplanmaz.
 
 ## Çalışanlar
