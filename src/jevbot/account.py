@@ -100,7 +100,8 @@ def simulate(ts: list[dict[str, Any]], now: int) -> dict[str, Any]:
 def account_report(state_dir: Path, now: int | None = None) -> dict[str, Any]:
     now = now or int(time.time() * 1000)
     tr = trades(state_dir)
-    return {"now": now, "arms": {a: simulate(tr[a], now) for a in ARMS}}
+    since = min((t["t_entry"] for ts in tr.values() for t in ts), default=now)
+    return {"now": now, "since": since, "arms": {a: simulate(tr[a], now) for a in ARMS}}
 
 
 def to_text(rep: dict[str, Any]) -> str:
@@ -108,7 +109,9 @@ def to_text(rep: dict[str, Any]) -> str:
     j, al, rd = (rep["arms"][a] for a in ARMS)
     hit = f"%{j['hit_24h'] * 100:.0f}" if j["hit_24h"] is not None else "—"
     return "\n".join([
-        f"🤖 Jev sanal hesap (başlangıç {START_EQUITY:,.0f}$) — {when}",
+        f"🤖 Jev sanal hesap — {when}",
+        f"Tek hesap: {datetime.fromtimestamp(rep.get('since', rep['now']) / 1000, TR):%d.%m}'de {START_EQUITY:,.0f}$ ile "
+        f"başladı, günlük sıfırlanmaz; kâr/zarar birikir, yeni pozisyon güncel bakiyeye göre açılır (1/{MAX_POS} pay).",
         f"Jev: {j['equity']:,.2f}$ ({j['return']:+.2%}) | maks. düşüş {j['max_dd']:.1%} | işlem {j['trades']} "
         f"(kripto {j['crypto']}, hisse {j['stocks']}) | açık {len(j['open'])}",
         f"Hep long: {al['equity']:,.2f}$ ({al['return']:+.2%}) | Rastgele: {rd['equity']:,.2f}$ ({rd['return']:+.2%})",
