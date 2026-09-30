@@ -197,7 +197,10 @@ class PaperEngine:
 
     async def run(self, stop: asyncio.Event | None = None) -> None:
         stop = stop or asyncio.Event()
-        await self.settle(self.clock())
+        try:
+            await self.settle(self.clock())
+        except Exception:                                    # a network problem at start must not kill the process
+            log.exception("paper_initial_settle_failed")
         while not stop.is_set():
             now = self.clock()
             t_tick = now - now % HOUR

@@ -598,6 +598,8 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
+    from jevbot.core.tls import ensure_system_trust
+    ensure_system_trust()                       # antivirus HTTPS scanning roots live in the Windows store
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
