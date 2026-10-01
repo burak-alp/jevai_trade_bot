@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import orjson
 
 from jevbot.judgment.state import STATE_SCHEMA
 from jevbot.paper.engine import read_jsonl
@@ -39,34 +40,69 @@ def trades(state_dir: Path) -> dict[str, list[dict[str, Any]]]:
     """Per arm: {market, symbol, side, t_entry, t_exit, net (fraction of notional) or None while open}."""
     out: dict[str, list[dict[str, Any]]] = {a: [] for a in ARMS}
     led = read_jsonl(Path(state_dir) / "jev.jsonl")
-    asked = {r["id"]: r.get("state", {}).get("schema") for r in led if r.get("kind") == "ask"
-             and r.get("question") == "direction_h"}
+    asked = {r["id"]: r.get("state", {}) for r in led if r.get("kind") == "ask" and r.get("question") == "direction_h"}
     opens = {r["id"]: r for r in led if r.get("kind") == "dir_open" and r.get("band_pct") is None}
     outs = {r["id"]: r for r in led if r.get("kind") == "dir_outcome" and r.get("status") == "ok"}
     for j in led:
         if j.get("kind") != "judgment" or j.get("question") != "direction_h" or j.get("status") != "ok":
             continue
         o = opens.get(j["id"])
-        if o is None or asked.get(j["id"]) != STATE_SCHEMA:
+        st = asked.get(j["id"], {})
+        if o is None or st.get("schema") != STATE_SCHEMA:
             continue
         p = j["probs"]
         score = p["direction_h.up"] - p["direction_h.down"]
         ret = outs[j["id"]]["ret_bps"] / 1e4 if j["id"] in outs else None
         base = {"market": "crypto", "symbol": o["symbol"], "t_entry": o["t_tick"], "entry_px": o.get("close"),
-                "t_exit": o["t_tick"] + o["horizon_min"] * 60_000}
+                "t_exit": o["t_tick"] + o["horizon_min"] * 60_000,
+                "why": _why_crypto(p["direction_h.up"], p["direction_h.down"], st.get("asset", {}))}
         for arm, side in (("jev", 1 if score >= SCORE_MIN else -1 if score <= -SCORE_MIN else 0), ("always_long", 1),
                           ("random", _rand_side(f"{o['symbol']}|{o['t_tick']}"))):
             if side:
                 out[arm].append({**base, "side": side, "net": None if ret is None else side * ret - CRYPTO_COST})
     lled = read_jsonl(Path(state_dir) / "llm" / "ledger.jsonl")
     louts = {r["id"]: r for r in lled if r.get("kind") == "outcome"}
+    ctx: dict[int, dict[str, Any]] = {}
     for d in lled:
         if d.get("kind") != "decision" or d["arm"] not in ARMS or not d["side"]:
             continue
         o = louts.get(f"{d['arm']}|{d['t_decision']}|{d['ticker']}")
+        if d["t_decision"] not in ctx:
+            f = Path(state_dir) / "llm" / f"context-{datetime.fromtimestamp(d['t_decision'] / 1000, timezone.utc):%Y%m%d}.json"
+            try:
+                ctx[d["t_decision"]] = orjson.loads(f.read_bytes()).get("symbols", {})
+            except (OSError, orjson.JSONDecodeError):
+                ctx[d["t_decision"]] = {}
         out[d["arm"]].append({"market": "stocks", "symbol": d["ticker"], "side": d["side"], "t_entry": d["t_entry"],
-                              "t_exit": d["t_entry"] + 86_400_000, "net": None if o is None else o.get("net")})
+                              "t_exit": d["t_entry"] + 86_400_000, "net": None if o is None else o.get("net"),
+                              "why": _why_stock(d, ctx[d["t_decision"]].get(d["ticker"], {}))})
     return out
+
+
+def _why_crypto(up: float, down: float, a: dict[str, Any]) -> str:
+    """Jev's probabilities + the main inputs it saw (state.slow.v2 asset block)."""
+    parts = [f"Jev ↑%{up * 100:.0f} ↓%{down * 100:.0f}"]
+    if "ret_24h_atr_1h" in a:
+        parts.append(f"24s {a['ret_24h_atr_1h']:+.1f} ATR, 7g {a.get('ret_7d_atr_1h', 0):+.1f} ATR")
+    if "ema50_vs_ema200_sign" in a:
+        parts.append("trend " + ("yukarı" if a["ema50_vs_ema200_sign"] > 0 else "aşağı"))
+    if "funding_bps_8h" in a:
+        parts.append(f"funding {a['funding_bps_8h']:+.1f} bps")
+    return " | ".join(parts)
+
+
+def _why_stock(d: dict[str, Any], c: dict[str, Any]) -> str:
+    """Probabilities + the arm's own reason when it gave one, else the context it saw (returns, trend, a headline)."""
+    parts = [f"↑%{d.get('up', 0) * 100:.0f} ↓%{d.get('down', 0) * 100:.0f}"]
+    if d.get("reason"):
+        return " | ".join(parts + [d["reason"]])
+    if "ret_1d_pct" in c:
+        parts.append(f"1g {c['ret_1d_pct']:+.1f}%, 5g {c.get('ret_5d_pct', 0):+.1f}%")
+    if "ema50_above_ema200" in c:
+        parts.append("trend " + ("yukarı" if c["ema50_above_ema200"] else "aşağı"))
+    if c.get("headlines"):
+        parts.append(f"haber: {c['headlines'][0][:90]}")
+    return " | ".join(parts)
 
 
 def simulate(ts: list[dict[str, Any]], now: int) -> dict[str, Any]:
@@ -171,14 +207,28 @@ def to_hourly(rep: dict[str, Any], prices: dict[str, float]) -> str:
                              f"{r:+.2%} ({p['size'] * r:+.2f}$) [{t0}]")
             else:
                 lines.append(f"⚪ {yon} {p['symbol'].removesuffix('USDT')}: fiyat alınamadı [{t0}]")
+            if p.get("why"):
+                lines.append(f"   ↳ {p['why']}")
     closed = [f"{'✅' if r['net'] > 0 else '❌'} {'LONG' if r['side'] > 0 else 'SHORT'} {r['symbol'].removesuffix('USDT')} "
               f"{r['net']:+.2%} ({r['pnl']:+.2f}$)" for r in j["closed_1h"]]
     head = [f"🕐 {when} | Jev hesap {j['equity']:,.2f}$ ({j['return']:+.2%})",
             f"Açık pozisyonların anlık kâr/zararı: {unreal:+.2f}$ | Hep long {al['return']:+.2%} | Rastgele {rd['return']:+.2%}"]
     if closed:
         head += [f"Son 1 saatte kapanan ({j['pnl_1h']:+.2f}$):", *closed]
-    text = "\n".join(head + [""] + lines) if lines else "\n".join(head + ["Açık pozisyon yok."])
-    return text if len(text) <= 4000 else text[:3990] + "\n…"
+    return "\n".join(head + [""] + lines) if lines else "\n".join(head + ["Açık pozisyon yok."])
+
+
+def chunks(text: str, limit: int = 4000) -> list[str]:
+    """Split on line boundaries into Telegram-sized messages (4096 max)."""
+    out, cur = [], ""
+    for line in text.split("\n"):
+        line = line[:limit]
+        if cur and len(cur) + 1 + len(line) > limit:
+            out.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    return out + [cur] if cur else out
 
 
 def _secret(var: str) -> str | None:
@@ -221,7 +271,10 @@ class DailyAccountReport:
         text = to_text(rep) if daily else to_hourly(rep, await mark_prices(rep["arms"]["jev"]["open"]))
         out = self.dir / "account"
         out.mkdir(parents=True, exist_ok=True)
-        status = await send_telegram(text)
+        status = "sent"
+        for part in chunks(text):
+            st = await send_telegram(part)
+            status = status if st == "sent" else st
         day = f"{datetime.fromtimestamp(t_tick / 1000, TR):%Y%m%d}"
         if daily:
             (out / f"report-{day}.txt").write_text(text + f"\n[telegram: {status}]\n", encoding="utf-8")

@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 
-from jevbot.account import DailyAccountReport, MAX_POS, SLOTS, START_EQUITY, account_report, mark_prices, send_telegram, simulate, to_text, trades
+from jevbot.account import DailyAccountReport, MAX_POS, SLOTS, START_EQUITY, account_report, chunks, mark_prices, send_telegram, simulate, to_text, trades
 from jevbot.paper.engine import _append
 
 DAY = 86_400_000
@@ -68,10 +68,17 @@ def test_hourly_and_daily_hook(tmp_path, monkeypatch):
     asyncio.run(hook.on_tick(T + DAY + 18 * 3_600_000))             # 18:00 UTC: full daily report
     assert sent[0].startswith("🕐") and "Jev sanal hesap" in sent[1]
     assert "LONG  A: 1.0000 → 1.1000 +9.88%" in sent[0] and "SHORT B" in sent[0]
+    assert "↳ Jev ↑%70 ↓%10" in sent[0] and "📈 Hisse" in sent[0] and "↳ ↑%" in sent[0]
     assert len(list((tmp_path / "account").glob("hourly-*.txt"))) == 1
     assert len(list((tmp_path / "account").glob("report-*.txt"))) == 1
     asyncio.run(DailyAccountReport(tmp_path, hourly=False).on_tick(T + DAY + 3_600_000))
     assert len(sent) == 2
+
+
+def test_chunks():
+    text = "\n".join(f"line {i} " + "x" * 50 for i in range(200))
+    parts = chunks(text)
+    assert all(len(p) <= 4000 for p in parts) and "\n".join(parts) == text and len(parts) > 1
 
 
 def test_mark_prices_fills_stock_entry():
