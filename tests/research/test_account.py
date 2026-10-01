@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 
-from jevbot.account import DailyAccountReport, MAX_POS, SLOTS, START_EQUITY, account_report, send_telegram, simulate, to_text, trades
+from jevbot.account import DailyAccountReport, MAX_POS, SLOTS, START_EQUITY, account_report, mark_prices, send_telegram, simulate, to_text, trades
 from jevbot.paper.engine import _append
 
 DAY = 86_400_000
@@ -59,14 +59,30 @@ def test_hourly_and_daily_hook(tmp_path, monkeypatch):
         sent.append(text)
         return "sent"
     monkeypatch.setattr("jevbot.account.send_telegram", fake_send)
+
+    async def fake_prices(opens):
+        return {"AUSDT": 1.1, "BUSDT": 1.1, "NVDAUSDT": 200.0}
+    monkeypatch.setattr("jevbot.account.mark_prices", fake_prices)
     hook = DailyAccountReport(tmp_path)
-    asyncio.run(hook.on_tick(T + DAY + 3_600_000))                  # 01:00 UTC: hourly line
+    asyncio.run(hook.on_tick(T + 3_600_000))                        # 01:00 UTC, positions open
     asyncio.run(hook.on_tick(T + DAY + 18 * 3_600_000))             # 18:00 UTC: full daily report
-    assert sent[0].startswith("🕐") and "son 1 saat" in sent[0] and "Jev sanal hesap" in sent[1]
+    assert sent[0].startswith("🕐") and "Jev sanal hesap" in sent[1]
+    assert "LONG  A: 1.0000 → 1.1000 +9.88%" in sent[0] and "SHORT B" in sent[0]
     assert len(list((tmp_path / "account").glob("hourly-*.txt"))) == 1
     assert len(list((tmp_path / "account").glob("report-*.txt"))) == 1
     asyncio.run(DailyAccountReport(tmp_path, hourly=False).on_tick(T + DAY + 3_600_000))
     assert len(sent) == 2
+
+
+def test_mark_prices_fills_stock_entry():
+    def handler(req):
+        if req.url.path.endswith("ticker/price"):
+            return httpx.Response(200, json=[{"symbol": "NVDAUSDT", "price": "230.5"}])
+        assert req.url.params["symbol"] == "NVDAUSDT"
+        return httpx.Response(200, json=[[0, "1", "1", "1", "228.0", "0"]])
+    opens = [{"market": "stocks", "symbol": "NVDA", "t_entry": T, "side": 1}]
+    px = asyncio.run(mark_prices(opens, transport=httpx.MockTransport(handler)))
+    assert px == {"NVDAUSDT": 230.5} and opens[0]["entry_px"] == 228.0
 
 
 def test_telegram_not_configured_and_sent(monkeypatch):

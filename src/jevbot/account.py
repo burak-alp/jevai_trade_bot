@@ -24,6 +24,8 @@ START_EQUITY = 1000.0
 SLOTS = {"crypto": 20, "stocks": 12}                    # per-market caps: crypto panels must not crowd out stocks
 MAX_POS = sum(SLOTS.values())                          # each position = equity / MAX_POS
 CRYPTO_COST = 0.0012
+STOCK_COST = 0.0020                                     # as llmtrader COST (funding not in the hourly mark)
+REST_BASE = "https://fapi.binance.com"
 SCORE_MIN = 0.2
 TR = timezone(timedelta(hours=3))
 ARMS = ("jev", "always_long", "random")
@@ -50,7 +52,7 @@ def trades(state_dir: Path) -> dict[str, list[dict[str, Any]]]:
         p = j["probs"]
         score = p["direction_h.up"] - p["direction_h.down"]
         ret = outs[j["id"]]["ret_bps"] / 1e4 if j["id"] in outs else None
-        base = {"market": "crypto", "symbol": o["symbol"], "t_entry": o["t_tick"],
+        base = {"market": "crypto", "symbol": o["symbol"], "t_entry": o["t_tick"], "entry_px": o.get("close"),
                 "t_exit": o["t_tick"] + o["horizon_min"] * 60_000}
         for arm, side in (("jev", 1 if score >= SCORE_MIN else -1 if score <= -SCORE_MIN else 0), ("always_long", 1),
                           ("random", _rand_side(f"{o['symbol']}|{o['t_tick']}"))):
@@ -92,9 +94,10 @@ def simulate(ts: list[dict[str, Any]], now: int) -> dict[str, Any]:
     day_ago = now - 86_400_000
     last24 = [r for r in realized if r["t_exit"] > day_ago]
     last1 = [r for r in realized if r["t_exit"] > now - 3_600_000]
-    return {"pnl_1h": sum(r["pnl"] for r in last1), "closed_1h": len(last1),"equity": equity, "return": equity / START_EQUITY - 1, "max_dd": max_dd, "trades": len(realized),
+    return {"equity": equity, "return": equity / START_EQUITY - 1, "max_dd": max_dd, "trades": len(realized),
             "crypto": sum(r["market"] == "crypto" for r in realized), "stocks": sum(r["market"] == "stocks" for r in realized),
-            "open": [ts[i] for i in held], "pnl_24h": sum(r["pnl"] for r in last24),
+            "open": [{**ts[i], "size": sz} for i, sz in held.items()], "pnl_24h": sum(r["pnl"] for r in last24),
+            "closed_1h": last1, "pnl_1h": sum(r["pnl"] for r in last1),
             "hit_24h": (sum(r["net"] > 0 for r in last24) / len(last24)) if last24 else None, "curve": curve}
 
 
@@ -121,12 +124,61 @@ def to_text(rep: dict[str, Any]) -> str:
     ])
 
 
-def to_short(rep: dict[str, Any]) -> str:
-    """One-line hourly status."""
+def _px(x: float) -> str:
+    return f"{x:,.2f}" if x >= 100 else f"{x:.4f}" if x >= 1 else f"{x:.6g}"
+
+
+async def mark_prices(opens: list[dict[str, Any]], rest_base: str = REST_BASE,
+                      transport: httpx.AsyncBaseTransport | None = None) -> dict[str, float]:
+    """Fills missing ``entry_px`` (stocks: close of the 1m bar before entry, as llm settle) in place and returns
+    current Binance futures prices (public endpoints, no key). Errors leave prices missing."""
+    try:
+        async with httpx.AsyncClient(base_url=rest_base, timeout=20, transport=transport) as c:
+            now = {x["symbol"]: float(x["price"]) for x in (await c.get("/fapi/v1/ticker/price")).json()}
+            for p in opens:
+                if p.get("entry_px") is None:
+                    k = (await c.get("/fapi/v1/klines", params={"symbol": _sym(p), "interval": "1m",
+                                                                "startTime": p["t_entry"] - 60_000, "limit": 1})).json()
+                    p["entry_px"] = float(k[0][4]) if k else None
+            return now
+    except (httpx.HTTPError, ValueError, KeyError, IndexError):
+        return {}
+
+
+def _sym(p: dict[str, Any]) -> str:
+    return p["symbol"] + "USDT" if p["market"] == "stocks" else p["symbol"]
+
+
+def to_hourly(rep: dict[str, Any], prices: dict[str, float]) -> str:
+    """Hourly message: account line + every open Jev position (entry, now, unrealized) + positions closed in the
+    last hour. Unrealized = side x simple return - round-trip cost, on the position's size."""
     when = datetime.fromtimestamp(rep["now"] / 1000, TR).strftime("%d.%m %H:%M")
     j, al, rd = (rep["arms"][a] for a in ARMS)
-    return (f"🕐 {when} | Jev {j['equity']:,.2f}$ ({j['return']:+.2%}) | son 1 saat: {j['closed_1h']} kapandı, "
-            f"{j['pnl_1h']:+.2f}$ | açık {len(j['open'])}\nHep long {al['return']:+.2%} | Rastgele {rd['return']:+.2%}")
+    lines, unreal = [], 0.0
+    for mkt, title, cost in (("stocks", "📈 Hisse", STOCK_COST), ("crypto", "🪙 Kripto", CRYPTO_COST)):
+        ps = sorted((p for p in j["open"] if p["market"] == mkt), key=lambda p: p["symbol"])
+        if not ps:
+            continue
+        lines.append(f"{title} ({len(ps)} açık)")
+        for p in ps:
+            yon = "LONG " if p["side"] > 0 else "SHORT"
+            t0 = datetime.fromtimestamp(p["t_entry"] / 1000, TR).strftime("%d.%m %H:%M")
+            p0, p1 = p.get("entry_px"), prices.get(_sym(p))
+            if p0 and p1:
+                r = p["side"] * (p1 / p0 - 1) - cost
+                unreal += p["size"] * r
+                lines.append(f"{'🟢' if r > 0 else '🔴'} {yon} {p['symbol'].removesuffix('USDT')}: {_px(p0)} → {_px(p1)} "
+                             f"{r:+.2%} ({p['size'] * r:+.2f}$) [{t0}]")
+            else:
+                lines.append(f"⚪ {yon} {p['symbol'].removesuffix('USDT')}: fiyat alınamadı [{t0}]")
+    closed = [f"{'✅' if r['net'] > 0 else '❌'} {'LONG' if r['side'] > 0 else 'SHORT'} {r['symbol'].removesuffix('USDT')} "
+              f"{r['net']:+.2%} ({r['pnl']:+.2f}$)" for r in j["closed_1h"]]
+    head = [f"🕐 {when} | Jev hesap {j['equity']:,.2f}$ ({j['return']:+.2%})",
+            f"Açık pozisyonların anlık kâr/zararı: {unreal:+.2f}$ | Hep long {al['return']:+.2%} | Rastgele {rd['return']:+.2%}"]
+    if closed:
+        head += [f"Son 1 saatte kapanan ({j['pnl_1h']:+.2f}$):", *closed]
+    text = "\n".join(head + [""] + lines) if lines else "\n".join(head + ["Açık pozisyon yok."])
+    return text if len(text) <= 4000 else text[:3990] + "\n…"
 
 
 def _secret(var: str) -> str | None:
@@ -166,7 +218,7 @@ class DailyAccountReport:
         if not daily and not self.hourly:
             return
         rep = account_report(self.dir, t_tick)
-        text = to_text(rep) if daily else to_short(rep)
+        text = to_text(rep) if daily else to_hourly(rep, await mark_prices(rep["arms"]["jev"]["open"]))
         out = self.dir / "account"
         out.mkdir(parents=True, exist_ok=True)
         status = await send_telegram(text)
