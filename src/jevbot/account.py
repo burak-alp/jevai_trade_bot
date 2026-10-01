@@ -91,7 +91,8 @@ def simulate(ts: list[dict[str, Any]], now: int) -> dict[str, Any]:
             curve.append((t, equity))
     day_ago = now - 86_400_000
     last24 = [r for r in realized if r["t_exit"] > day_ago]
-    return {"equity": equity, "return": equity / START_EQUITY - 1, "max_dd": max_dd, "trades": len(realized),
+    last1 = [r for r in realized if r["t_exit"] > now - 3_600_000]
+    return {"pnl_1h": sum(r["pnl"] for r in last1), "closed_1h": len(last1),"equity": equity, "return": equity / START_EQUITY - 1, "max_dd": max_dd, "trades": len(realized),
             "crypto": sum(r["market"] == "crypto" for r in realized), "stocks": sum(r["market"] == "stocks" for r in realized),
             "open": [ts[i] for i in held], "pnl_24h": sum(r["pnl"] for r in last24),
             "hit_24h": (sum(r["net"] > 0 for r in last24) / len(last24)) if last24 else None, "curve": curve}
@@ -120,6 +121,14 @@ def to_text(rep: dict[str, Any]) -> str:
     ])
 
 
+def to_short(rep: dict[str, Any]) -> str:
+    """One-line hourly status."""
+    when = datetime.fromtimestamp(rep["now"] / 1000, TR).strftime("%d.%m %H:%M")
+    j, al, rd = (rep["arms"][a] for a in ARMS)
+    return (f"🕐 {when} | Jev {j['equity']:,.2f}$ ({j['return']:+.2%}) | son 1 saat: {j['closed_1h']} kapandı, "
+            f"{j['pnl_1h']:+.2f}$ | açık {len(j['open'])}\nHep long {al['return']:+.2%} | Rastgele {rd['return']:+.2%}")
+
+
 def _secret(var: str) -> str | None:
     v = os.environ.get(var)
     if v or sys.platform != "win32":
@@ -146,21 +155,27 @@ async def send_telegram(text: str, transport: httpx.AsyncBaseTransport | None = 
 
 
 class DailyAccountReport:
-    """Paper-engine hook: every day at 18:00 UTC (21:00 Turkey) write the report and send it to Telegram."""
+    """Paper-engine hook: every day at 18:00 UTC (21:00 Turkey) write the full report and send it to Telegram;
+    with ``hourly`` the other ticks send a one-line status (appended to hourly-YYYYMMDD.txt)."""
 
-    def __init__(self, state_dir: Path, hour_utc: int = 18) -> None:
-        self.dir, self.hour = Path(state_dir), hour_utc
+    def __init__(self, state_dir: Path, hour_utc: int = 18, hourly: bool = True) -> None:
+        self.dir, self.hour, self.hourly = Path(state_dir), hour_utc, hourly
 
     async def on_tick(self, t_tick: int) -> None:
-        if datetime.fromtimestamp(t_tick / 1000, timezone.utc).hour != self.hour:
+        daily = datetime.fromtimestamp(t_tick / 1000, timezone.utc).hour == self.hour
+        if not daily and not self.hourly:
             return
         rep = account_report(self.dir, t_tick)
-        text = to_text(rep)
+        text = to_text(rep) if daily else to_short(rep)
         out = self.dir / "account"
         out.mkdir(parents=True, exist_ok=True)
         status = await send_telegram(text)
-        (out / f"report-{datetime.fromtimestamp(t_tick / 1000, TR):%Y%m%d}.txt").write_text(
-            text + f"\n[telegram: {status}]\n", encoding="utf-8")
+        day = f"{datetime.fromtimestamp(t_tick / 1000, TR):%Y%m%d}"
+        if daily:
+            (out / f"report-{day}.txt").write_text(text + f"\n[telegram: {status}]\n", encoding="utf-8")
+        else:
+            with open(out / f"hourly-{day}.txt", "a", encoding="utf-8") as f:
+                f.write(text + f"\n[telegram: {status}]\n")
 
     async def settle(self, now: int) -> None:
         return None

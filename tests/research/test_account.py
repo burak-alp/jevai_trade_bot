@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 
-from jevbot.account import MAX_POS, SLOTS, START_EQUITY, account_report, send_telegram, simulate, to_text, trades
+from jevbot.account import DailyAccountReport, MAX_POS, SLOTS, START_EQUITY, account_report, send_telegram, simulate, to_text, trades
 from jevbot.paper.engine import _append
 
 DAY = 86_400_000
@@ -49,6 +49,24 @@ def test_open_until_settled_and_slot_cap():
     ts[0]["net"] = None
     s = simulate(ts, now=T + 2 * DAY)
     assert s["trades"] == SLOTS["crypto"] - 1 + 1 and len(s["open"]) == 1 and s["stocks"] == 1   # stock not crowded out
+
+
+def test_hourly_and_daily_hook(tmp_path, monkeypatch):
+    _ledgers(tmp_path)
+    sent = []
+
+    async def fake_send(text):
+        sent.append(text)
+        return "sent"
+    monkeypatch.setattr("jevbot.account.send_telegram", fake_send)
+    hook = DailyAccountReport(tmp_path)
+    asyncio.run(hook.on_tick(T + DAY + 3_600_000))                  # 01:00 UTC: hourly line
+    asyncio.run(hook.on_tick(T + DAY + 18 * 3_600_000))             # 18:00 UTC: full daily report
+    assert sent[0].startswith("🕐") and "son 1 saat" in sent[0] and "Jev sanal hesap" in sent[1]
+    assert len(list((tmp_path / "account").glob("hourly-*.txt"))) == 1
+    assert len(list((tmp_path / "account").glob("report-*.txt"))) == 1
+    asyncio.run(DailyAccountReport(tmp_path, hourly=False).on_tick(T + DAY + 3_600_000))
+    assert len(sent) == 2
 
 
 def test_telegram_not_configured_and_sent(monkeypatch):
