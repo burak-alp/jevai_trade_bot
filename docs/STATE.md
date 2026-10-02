@@ -29,6 +29,9 @@ Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, 
 - Jev soruları: B `trade_success` (her öneri), C `direction_h` 24 h (top-30, 4 saatte bir), `btc_regime_7d` (günde 1).
 - **llm.v1 (ABD hisse perp, Jev vs Claude):** paper sürecinin hook'u, hafta içi 14:00 UTC bağlam + Jev; Claude kolu zamanlanmış
   görev `jevai-llm-claude-arm` (17:08 TR) → `jevbot llm-record`. Referanslar: always_long, random. Rapor: `jevbot llm-report`.
+- **Sanal hesap (`jevbot jev-account`):** 1000$ tek birikimli hesap, Jev kripto C + Jev hisse; Telegram saatlik pozisyon
+  detayı + 21:00 tam rapor. `jev_dyn` (ön kayıt 02.10, yalnız rapor; C testi değişmez): aynı pozisyonlar, aynı coin için
+  sonraki 4 saatlik panel ters sinyal verirse (|skor|≥0.2) o panelin fiyatından erken kapanır. 27.10'da jev ile kıyaslanır.
 
 ## Karar takvimi (Türkiye saati; ön kayıtlı)
 - C: 1. gün bilgi (29.09 19:10), 7. gün futility, ≥ 28 gün GO (AUC CI alt > 0.5 ve sinyal net CI alt > 0; 7 g blok).

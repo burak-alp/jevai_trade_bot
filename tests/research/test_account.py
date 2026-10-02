@@ -1,3 +1,4 @@
+import math
 import asyncio
 
 import httpx
@@ -104,3 +105,23 @@ def test_telegram_not_configured_and_sent(monkeypatch):
         return httpx.Response(200, json={"ok": True})
     assert asyncio.run(send_telegram("merhaba", transport=httpx.MockTransport(handler))) == "sent"
     assert seen["url"].endswith("/bottok/sendMessage") and b"merhaba" in seen["body"]
+
+
+def test_dynamic_arm_exits_on_opposite_signal(tmp_path):
+    rows = []
+    for rid, t, up, down, close in (("a", T, 0.7, 0.1, 1.0), ("b", T + 4 * 3_600_000, 0.1, 0.6, 0.9)):
+        rows += [{"kind": "dir_open", "id": rid, "symbol": "AUSDT", "t_tick": t, "close": close, "atr_pct": 0.01,
+                  "horizon_min": 1440, "band_atr": 2.45, "source": "panel"},
+                 {"kind": "ask", "question": "direction_h", "id": rid, "t_tick": t, "state": {"schema": "state.slow.v2"}},
+                 {"kind": "judgment", "question": "direction_h", "id": rid, "t_tick": t, "status": "ok",
+                  "probs": {"direction_h.up": up, "direction_h.flat": 1 - up - down, "direction_h.down": down}}]
+    _append(tmp_path / "jev.jsonl", rows)
+    tr = trades(tmp_path)
+    jev, dyn = tr["jev"], tr["jev_dyn"]
+    assert jev[0]["net"] is None and jev[0]["t_exit"] == T + DAY                       # static: open, unsettled
+    assert dyn[0]["early"] and dyn[0]["t_exit"] == T + 4 * 3_600_000
+    assert abs(dyn[0]["net"] - (math.log(0.9) - 0.0012)) < 1e-12
+    assert dyn[1] == jev[1] and dyn[1]["side"] == -1                                   # the new short is unchanged
+    rep = account_report(tmp_path, now=T + 5 * 3_600_000)
+    assert rep["arms"]["jev_dyn"]["early"] == 1 and rep["arms"]["jev"]["trades"] == 0
+    assert "Jev dinamik" in to_text(rep)

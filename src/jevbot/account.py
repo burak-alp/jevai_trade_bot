@@ -8,6 +8,7 @@ report; funding not included). Stocks: llm.v1 outcomes (20 bps + funding already
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import sys
 import time
@@ -29,7 +30,10 @@ STOCK_COST = 0.0020                                     # as llmtrader COST (fun
 REST_BASE = "https://fapi.binance.com"
 SCORE_MIN = 0.2
 TR = timezone(timedelta(hours=3))
-ARMS = ("jev", "always_long", "random")
+ARMS = ("jev", "jev_dyn", "always_long", "random")
+# jev_dyn (pre-registered 2026-10-02, reporting only; the C test itself is unchanged): the same Jev crypto
+# positions, but closed at the first later 4-hourly panel answer for the same symbol that signals the opposite side
+# (|score| >= SCORE_MIN), at that panel's close; otherwise exactly as jev. Stocks: same as jev (daily decisions).
 
 
 def _rand_side(key: str) -> int:
@@ -43,6 +47,7 @@ def trades(state_dir: Path) -> dict[str, list[dict[str, Any]]]:
     asked = {r["id"]: r.get("state", {}) for r in led if r.get("kind") == "ask" and r.get("question") == "direction_h"}
     opens = {r["id"]: r for r in led if r.get("kind") == "dir_open" and r.get("band_pct") is None}
     outs = {r["id"]: r for r in led if r.get("kind") == "dir_outcome" and r.get("status") == "ok"}
+    seen: dict[str, list[tuple[int, float, float | None]]] = {}
     for j in led:
         if j.get("kind") != "judgment" or j.get("question") != "direction_h" or j.get("status") != "ok":
             continue
@@ -60,6 +65,12 @@ def trades(state_dir: Path) -> dict[str, list[dict[str, Any]]]:
                           ("random", _rand_side(f"{o['symbol']}|{o['t_tick']}"))):
             if side:
                 out[arm].append({**base, "side": side, "net": None if ret is None else side * ret - CRYPTO_COST})
+        seen.setdefault(o["symbol"], []).append((o["t_tick"], score, o.get("close")))
+    for t in out["jev"]:
+        flip = next(((tt, px) for tt, sc, px in sorted(seen.get(t["symbol"], [])) if t["t_entry"] < tt < t["t_exit"]
+                     and sc * t["side"] <= -SCORE_MIN and px and t["entry_px"]), None)
+        out["jev_dyn"].append(t if flip is None else {**t, "t_exit": flip[0], "early": True,
+                                                       "net": t["side"] * math.log(flip[1] / t["entry_px"]) - CRYPTO_COST})
     lled = read_jsonl(Path(state_dir) / "llm" / "ledger.jsonl")
     louts = {r["id"]: r for r in lled if r.get("kind") == "outcome"}
     ctx: dict[int, dict[str, Any]] = {}
@@ -67,15 +78,18 @@ def trades(state_dir: Path) -> dict[str, list[dict[str, Any]]]:
         if d.get("kind") != "decision" or d["arm"] not in ARMS or not d["side"]:
             continue
         o = louts.get(f"{d['arm']}|{d['t_decision']}|{d['ticker']}")
+        arms = ("jev", "jev_dyn") if d["arm"] == "jev" else (d["arm"],)
         if d["t_decision"] not in ctx:
             f = Path(state_dir) / "llm" / f"context-{datetime.fromtimestamp(d['t_decision'] / 1000, timezone.utc):%Y%m%d}.json"
             try:
                 ctx[d["t_decision"]] = orjson.loads(f.read_bytes()).get("symbols", {})
             except (OSError, orjson.JSONDecodeError):
                 ctx[d["t_decision"]] = {}
-        out[d["arm"]].append({"market": "stocks", "symbol": d["ticker"], "side": d["side"], "t_entry": d["t_entry"],
+        row = {"market": "stocks", "symbol": d["ticker"], "side": d["side"], "t_entry": d["t_entry"],
                               "t_exit": d["t_entry"] + 86_400_000, "net": None if o is None else o.get("net"),
-                              "why": _why_stock(d, ctx[d["t_decision"]].get(d["ticker"], {}))})
+                              "why": _why_stock(d, ctx[d["t_decision"]].get(d["ticker"], {}))}
+        for a in arms:
+            out[a].append(row)
     return out
 
 
@@ -133,7 +147,7 @@ def simulate(ts: list[dict[str, Any]], now: int) -> dict[str, Any]:
     return {"equity": equity, "return": equity / START_EQUITY - 1, "max_dd": max_dd, "trades": len(realized),
             "crypto": sum(r["market"] == "crypto" for r in realized), "stocks": sum(r["market"] == "stocks" for r in realized),
             "open": [{**ts[i], "size": sz} for i, sz in held.items()], "pnl_24h": sum(r["pnl"] for r in last24),
-            "closed_1h": last1, "pnl_1h": sum(r["pnl"] for r in last1),
+            "early": sum(bool(r.get("early")) for r in realized), "closed_1h": last1, "pnl_1h": sum(r["pnl"] for r in last1),
             "hit_24h": (sum(r["net"] > 0 for r in last24) / len(last24)) if last24 else None, "curve": curve}
 
 
@@ -146,7 +160,7 @@ def account_report(state_dir: Path, now: int | None = None) -> dict[str, Any]:
 
 def to_text(rep: dict[str, Any]) -> str:
     when = datetime.fromtimestamp(rep["now"] / 1000, TR).strftime("%d.%m %H:%M")
-    j, al, rd = (rep["arms"][a] for a in ARMS)
+    j, dy, al, rd = (rep["arms"][a] for a in ARMS)
     hit = f"%{j['hit_24h'] * 100:.0f}" if j["hit_24h"] is not None else "—"
     return "\n".join([
         f"🤖 Jev sanal hesap — {when}",
@@ -154,6 +168,8 @@ def to_text(rep: dict[str, Any]) -> str:
         f"başladı, günlük sıfırlanmaz; kâr/zarar birikir, yeni pozisyon güncel bakiyeye göre açılır (1/{MAX_POS} pay).",
         f"Jev: {j['equity']:,.2f}$ ({j['return']:+.2%}) | maks. düşüş {j['max_dd']:.1%} | işlem {j['trades']} "
         f"(kripto {j['crypto']}, hisse {j['stocks']}) | açık {len(j['open'])}",
+        f"Jev dinamik (ters sinyalde erken çıkış): {dy['equity']:,.2f}$ ({dy['return']:+.2%}) | "
+        f"erken kapanan {dy['early']}",
         f"Hep long: {al['equity']:,.2f}$ ({al['return']:+.2%}) | Rastgele: {rd['equity']:,.2f}$ ({rd['return']:+.2%})",
         f"Son 24 saat: {j['pnl_24h']:+.2f}$ | isabet {hit}",
         "Sanal hesap; gerçek para yok. Karar: kripto 06.10 eleme / 27.10 karar, hisse 4. ve 8. hafta.",
@@ -189,7 +205,7 @@ def to_hourly(rep: dict[str, Any], prices: dict[str, float]) -> str:
     """Hourly message: account line + every open Jev position (entry, now, unrealized) + positions closed in the
     last hour. Unrealized = side x simple return - round-trip cost, on the position's size."""
     when = datetime.fromtimestamp(rep["now"] / 1000, TR).strftime("%d.%m %H:%M")
-    j, al, rd = (rep["arms"][a] for a in ARMS)
+    j, dy, al, rd = (rep["arms"][a] for a in ARMS)
     lines, unreal = [], 0.0
     for mkt, title, cost in (("stocks", "📈 Hisse", STOCK_COST), ("crypto", "🪙 Kripto", CRYPTO_COST)):
         ps = sorted((p for p in j["open"] if p["market"] == mkt), key=lambda p: p["symbol"])
@@ -212,7 +228,8 @@ def to_hourly(rep: dict[str, Any], prices: dict[str, float]) -> str:
     closed = [f"{'✅' if r['net'] > 0 else '❌'} {'LONG' if r['side'] > 0 else 'SHORT'} {r['symbol'].removesuffix('USDT')} "
               f"{r['net']:+.2%} ({r['pnl']:+.2f}$)" for r in j["closed_1h"]]
     head = [f"🕐 {when} | Jev hesap {j['equity']:,.2f}$ ({j['return']:+.2%})",
-            f"Açık pozisyonların anlık kâr/zararı: {unreal:+.2f}$ | Hep long {al['return']:+.2%} | Rastgele {rd['return']:+.2%}"]
+            f"Açık pozisyonların anlık kâr/zararı: {unreal:+.2f}$",
+            f"Jev dinamik {dy['return']:+.2%} | Hep long {al['return']:+.2%} | Rastgele {rd['return']:+.2%}"]
     if closed:
         head += [f"Son 1 saatte kapanan ({j['pnl_1h']:+.2f}$):", *closed]
     return "\n".join(head + [""] + lines) if lines else "\n".join(head + ["Açık pozisyon yok."])
