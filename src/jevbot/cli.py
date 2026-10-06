@@ -305,11 +305,49 @@ def cmd_macro_paper(args: argparse.Namespace) -> int:
         from jevbot.macro_orders import build
         from jevbot.macro_orders import to_text as orders_text
         texts.append(orders_text(build(Path(args.orders_dir), Path(args.state_dir))))
+    live_state = Path(args.live_dir) / "state.json"
+    if live_state.exists():                                                     # automatic bot (macro-live --mode)
+        from jevbot.macro_live import LiveError
+        from jevbot.macro_live import run as live_run
+        from jevbot.macro_live import to_text as live_text
+        mode = orjson.loads(live_state.read_bytes()).get("mode", "dry")
+        try:
+            texts.append(live_text(live_run(Path(args.live_dir), Path(args.state_dir), live=mode == "live")))
+        except LiveError as e:
+            texts.append(f"🤖 Makro bot: çalışmadı — {e}")
     sys.stdout.reconfigure(encoding="utf-8")
     for text in texts:
         sys.stdout.write(text + "\n")
         if args.telegram:
             sys.stdout.write(f"telegram: {_run_async(lambda t=text: send_telegram(t))}\n")
+    return 0
+
+
+def cmd_macro_live(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.account import send_telegram
+    from jevbot.macro_live import LiveError, run, to_text
+
+    sf = Path(args.state_dir) / "state.json"
+    st = orjson.loads(sf.read_bytes()) if sf.exists() else {}
+    if args.mode:
+        st["mode"] = args.mode
+    try:
+        res = run(Path(args.state_dir), Path(args.paper_dir), live=st.get("mode") == "live" and args.mode != "dry",
+                  leverage=args.leverage, dry_equity=args.equity, reset_halt=args.reset_halt)
+    except LiveError as e:
+        sys.stderr.write(f"macro-live: {e}\n")
+        return 3
+    if args.mode:                                          # run() rewrote the state; keep the chosen mode
+        st2 = orjson.loads(sf.read_bytes())
+        st2["mode"] = args.mode
+        sf.write_bytes(orjson.dumps(st2, option=orjson.OPT_INDENT_2))
+    text = to_text(res)
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.write(text + "\n")
+    if args.telegram:
+        sys.stdout.write(f"telegram: {_run_async(lambda: send_telegram(text))}\n")
     return 0
 
 
@@ -558,7 +596,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state-dir", default="run/macro-paper")
     p.add_argument("--telegram", action="store_true", help="also send the summary (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
     p.add_argument("--orders-dir", default="run/macro-orders", help="weekly manual order list (if configured)")
+    p.add_argument("--live-dir", default="run/macro-live", help="automatic bot state (runs if configured)")
     p.set_defaults(func=cmd_macro_paper)
+
+    p = sub.add_parser("macro-live", help="automatic macro bot on your Binance account (dry-run unless --mode live, "
+                                          "JEVBOT_LIVE=YES and keys)")
+    p.add_argument("--state-dir", default="run/macro-live")
+    p.add_argument("--paper-dir", default="run/macro-paper")
+    p.add_argument("--mode", choices=["dry", "live"], default=None, help="persisted; the nightly run uses it")
+    p.add_argument("--leverage", type=float, default=None, help="persisted; 1 = none (default), max 3")
+    p.add_argument("--equity", type=float, default=100.0, help="dry-run account size when no keys are set")
+    p.add_argument("--reset-halt", action="store_true", help="resume after the 30 %% drawdown halt")
+    p.add_argument("--telegram", action="store_true")
+    p.set_defaults(func=cmd_macro_live)
 
     p = sub.add_parser("macro-orders", help="manual weekly order list for macro.trend.v1 (no keys, nothing sent to Binance)")
     p.add_argument("--state-dir", default="run/macro-orders")

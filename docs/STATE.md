@@ -24,7 +24,11 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
   `context-<hafta>.json` → `overlay-<hafta>.json` (istem docs/overlay_prompt.md). 13. hafta futility, 26. hafta GO.
 - **macro.orders.v1** (`jevbot macro-orders --equity <USDT> [--leverage 1]`): elle girilecek haftalık HEDEF pozisyon listesi
   (Binance adım/en küçük emir kurallarına göre); yapılandırılınca cuma rebalansında Telegram'a otomatik. Otomatik emir
-  modülü Claude Code güvenlik sınıflandırıcısınca engellendi (06.10) → kullanıcı elle uygular.
+  modülü önce sınıflandırıcıca engellendi; kullanıcı izin modunu değiştirip onayladı (06.10).
+- **macro.live.v1** (`jevbot macro-live --mode dry|live [--leverage]`): kullanıcının Binance hesabında otomatik bot; gece
+  görevi (macro-paper) yapılandırılmışsa çalıştırır. Gerçek emir için 3 kilit: mode live + JEVBOT_LIVE=YES + anahtar
+  (yalnız işlem, çekim yok, IP kilitli; ortam değişkeni, asla dosyada). DD %20 → 1x, %30 → HALT (--reset-halt).
+  06.10: anahtarsız kuru çalışma modunda kuruldu.
 
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |
