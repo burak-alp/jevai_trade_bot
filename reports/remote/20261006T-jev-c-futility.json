@@ -1,0 +1,240 @@
+{
+  "runs": [
+    {
+      "at": 1790602782023,
+      "model_requested": "jev-latest",
+      "pinning": "unverified",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v1"
+    },
+    {
+      "at": 1790603225011,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v1"
+    },
+    {
+      "at": 1790608311537,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790628829817,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790634819804,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790669577960,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790715839216,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790717607920,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790720307694,
+      "model_requested": "jev-latest",
+      "pinning": "unverified",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790720912847,
+      "model_requested": "jev-latest",
+      "pinning": "unverified",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790786440594,
+      "model_requested": "jev-latest",
+      "pinning": "unverified",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790786472604,
+      "model_requested": "jev-latest",
+      "pinning": "unverified",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790786759148,
+      "model_requested": "jev-latest",
+      "pinning": "unverified",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790786987557,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790787099762,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790814557025,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790821441668,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790873737721,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790928022331,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1790932859279,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    },
+    {
+      "at": 1791058618739,
+      "model_requested": "jev-1.13.0",
+      "pinning": "versioned",
+      "questionset": "qs.slow.v1",
+      "prompt_hash": "86e33fab9ae155c0",
+      "state_schema": "state.slow.v2"
+    }
+  ],
+  "state_schema_evaluated": "state.slow.v2",
+  "judgments_other_schema": 8,
+  "models_returned": [
+    "jev-1.13.0",
+    "typesafe/jev-1.13-20260917"
+  ],
+  "status": {
+    "trade_success:ok": 63,
+    "direction_h:ok": 1125,
+    "btc_regime_7d:ok": 6
+  },
+  "tokens": {
+    "input": 737348,
+    "output": 45456
+  },
+  "latency_ms_p50": 450.5,
+  "latency_ms_p95": 1407.0,
+  "late_trade_success": 3,
+  "ci_block_days": 7,
+  "arm_B_trade_success": {
+    "n": 45,
+    "blocks": 2,
+    "tp_rate": 0.0222,
+    "mean_p": 0.3193,
+    "auc": 0.0,
+    "auc_ci95": [
+      0.0,
+      0.0
+    ],
+    "net_r_all": -0.2238,
+    "net_r_p_above_median": -0.3859,
+    "net_r_p_below_median": -0.0212
+  },
+  "arm_C_direction": {
+    "n": 907,
+    "blocks": 2,
+    "base_rates": {
+      "up": 0.1367,
+      "flat": 0.7464,
+      "down": 0.1169
+    },
+    "mean_score": -0.0297,
+    "auc_up_vs_down": 0.3418,
+    "auc_ci95": [
+      0.296,
+      0.3479
+    ],
+    "signals": 701,
+    "signal_min": 0.2,
+    "cost_bps": 12.0,
+    "signal_net_bps_mean": -92.26,
+    "signal_net_bps_ci95": [
+      -118.9836,
+      -32.6587
+    ],
+    "signal_hit_rate": 0.3809
+  },
+  "btc_regime_7d": {
+    "n": 1,
+    "accuracy": 0.0,
+    "base_rates": {
+      "up": 0.0,
+      "flat": 1.0,
+      "down": 0.0
+    },
+    "n_non_overlapping": 0,
+    "accuracy_non_overlapping": null
+  }
+}

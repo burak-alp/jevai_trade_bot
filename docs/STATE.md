@@ -1,6 +1,6 @@
 # STATE — tek sayfa proje durumu (önce bunu oku; ≤ 60 satır tutulur, her karar sonrası güncellenir)
 
-Güncelleme: 2026-09-29 03:15 (Claude, yerel). Ayrıntı gerekirse: `python scripts/rag.py query "<konu>" --max-chars 1800`.
+Güncelleme: 2026-10-06 11:40 (Claude, yerel). Ayrıntı gerekirse: `python scripts/rag.py query "<konu>" --max-chars 1800`.
 
 ## Hedef
 Kripto (Binance USDⓈ-M) için maliyet sonrası kârlı bot; kaldıraçlı/kaldıraçsız serbest. Mimari: deterministik
@@ -20,6 +20,7 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
 | carry.base BTC+ETH (referans) | aynı | +%4.9/yıl [4.0, 5.9], DD %0.4; h2 %2.7 — nakit "earn" faizi mertebesi |
 | hlp.v1 Hyperliquid kalıcılık | P1 Mar–May → P2 Haz–Ağu 2026 | yansız örneklemde Spearman +0.005; P1 kazananları P2 medyan −%95 → kopya yolu yok |
 | gap.v1 TradFi hisse perp gece/hafta sonu açığı | 2026-01 → 09, 36 hisse | eğim ≈ 0; geri dönüş −13 bps net → geçmedi (verimli) |
+| Jev C direction_h 24 h (canlı shadow) | 29.09 → 06.10, n 907, 2 blok | futility: AUC 0.342 [0.296, 0.348], sinyal net −92 bps [−119, −33], isabet %38 → kapandı |
 Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, kiraz toplanmaz.
 
 ## Çalışanlar
@@ -34,7 +35,8 @@ Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, 
   sonraki 4 saatlik panel ters sinyal verirse (|skor|≥0.2) o panelin fiyatından erken kapanır. 27.10'da jev ile kıyaslanır.
 
 ## Karar takvimi (Türkiye saati; ön kayıtlı)
-- C: 1. gün bilgi (29.09 19:10), 7. gün futility, ≥ 28 gün GO (AUC CI alt > 0.5 ve sinyal net CI alt > 0; 7 g blok).
+- C: **06.10 futility tetiklendi → kapandı** (AUC ≤ 0.5 ve net ≤ 0, ikisi de). AUC < 0.5 tersine çevirmeye gerekçe değil
+  (post-hoc; 30 coin aynı saatte korelasyonlu, 2 blok). B ara bilgi: n 45, TP %2, net −0.22 R (karar n ≥ 100).
 - B: n ≥ 100 yerleşmiş ve ≥ 4 blok; AUC CI alt > 0.5 ve A1'i (0.525) geçmeli.
 - btc_regime_7d: çakışmasız haftalık örneklemde isabet > taban oran; anlamlılık aylar sürer (yılda ~52 örnek).
 
