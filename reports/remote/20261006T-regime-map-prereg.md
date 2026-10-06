@@ -31,3 +31,9 @@ rejime göre dönemler, trend takibi + kırılım, günlük + 4 saatlik.
      **ve** REJİM-GEÇİŞ yıllık getirisinin CI alt sınırı > 0.
    - Ek bilgi: kahin rejimle aynı geçiş (tavan) ve evren hep long ile kıyas.
 3. Eşik gevşetme yok; ızgara genişletilmez. Sonuç ne çıkarsa STATE'e yazılır.
+
+## Netleştirme (sonuç görülmeden, kod yazılırken)
+- Evren yalnız USDT kotalı, stabil olmayan bazlar (USDC/BUSD/TUSD/FDUSD/… hariç); BUSD çiftleri çift sayım olmasın diye dışarıda.
+- Son gün: yerel 1d verisi 2026-09-26'da bitiyor → değerlendirme 2026-09-26'ya kadar.
+- Rejim geçişinde strateji değişen gün 2 × 6 bps (tam ciro varsayımı) ek maliyet.
+- TradFi/endeks kontratları (exchangeInfo underlyingType ≠ COIN: hisse, emtia, FX, endeks) evren dışı; kullanıcı kripto seçti.

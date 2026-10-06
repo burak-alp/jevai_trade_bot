@@ -21,6 +21,7 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
 | hlp.v1 Hyperliquid kalıcılık | P1 Mar–May → P2 Haz–Ağu 2026 | yansız örneklemde Spearman +0.005; P1 kazananları P2 medyan −%95 → kopya yolu yok |
 | gap.v1 TradFi hisse perp gece/hafta sonu açığı | 2026-01 → 09, 36 hisse | eğim ≈ 0; geri dönüş −13 bps net → geçmedi (verimli) |
 | Jev C direction_h 24 h (canlı shadow) | 29.09 → 06.10, n 907, 2 blok | futility: AUC 0.342 [0.296, 0.348], sinyal net −92 bps [−119, −33], isabet %38 → kapandı |
+| regime.map.v1 rejim→strateji (trend/kırılım, 1d+4h, top-20 PIT) | P1 2021-10→2024-03, P2 2024-04→2026-09 | P2 rejim-geçiş +%1.6/yıl [−53, +145], tek-en-iyi −%23; fark +8.7 bps/g [−11, +28] → geçmedi; kahin geçiş de +%1.8 (P1 eşlemesi P2'ye taşınmıyor) |
 Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, kiraz toplanmaz.
 
 ## Çalışanlar
