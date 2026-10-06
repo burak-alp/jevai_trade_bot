@@ -84,8 +84,7 @@ def worst_month(x, days):
 
 def main() -> int:
     data = load_all()
-    v1.ASSETS = BROAD
-    days, P_all, cash = v1.align(data)
+    days, P_all, cash = v1.align(data, BROAD)
     d = np.array(days)
     D, T_ = d < v1.SPLIT, d >= v1.SPLIT
     cols = {a: i for i, a in enumerate(BROAD)}

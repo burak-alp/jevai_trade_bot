@@ -16,6 +16,11 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
   v1 temel kalır. Geniş evren ve short T'de kötüleştirdi. Kaldıraç tablosu (T, tavan 3x, finansman farkı TradFi %1 kripto %5):
   hedef %10: %14.1/yıl DD %20 | %15: %18.7 DD %29 | %20: %22.0 DD %35 en kötü ay −%16 | %30: %26.4 DD %42 en kötü ay −%23.
 
+## Çalışan (06.10 15:00'ten itibaren)
+- **macro.paper.v1** (`jevbot macro-paper --telegram`, durum `run/macro-paper`): v1 ağırlıkları backtest ile aynı kodla
+  (`jevbot.research.macro`; eşdeğerlik testi), Binance perp fiyatları + gerçek funding, haftalık rebalans, hesaplar 1x ve 2x,
+  boştaki nakit T-bill faizi. Günlük çalıştırma: kullanıcının kuracağı Windows görevi (01:30 TR). Gerçek emir yok.
+
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |
 |---|---|---|

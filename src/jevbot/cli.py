@@ -293,6 +293,20 @@ def cmd_jev_account(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_macro_paper(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.account import send_telegram
+    from jevbot.macro_paper import run_once, to_text
+
+    text = to_text(run_once(Path(args.state_dir)))
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.write(text + "\n")
+    if args.telegram:
+        sys.stdout.write(f"telegram: {_run_async(lambda: send_telegram(text))}\n")
+    return 0
+
+
 def cmd_jev_report(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -518,6 +532,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state-dir", default="run/paper-jev")
     p.add_argument("--telegram", action="store_true", help="also send it (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
     p.set_defaults(func=cmd_jev_account)
+
+    p = sub.add_parser("macro-paper", help="macro.trend.v1 live paper on Binance perps (daily; weekly rebalance; no orders)")
+    p.add_argument("--state-dir", default="run/macro-paper")
+    p.add_argument("--telegram", action="store_true", help="also send the summary (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
+    p.set_defaults(func=cmd_macro_paper)
 
     p = sub.add_parser("llm-report", help="llm.v1: per-arm settled trades, net bps, AUC")
     p.add_argument("--state-dir", default="run/paper-jev")
