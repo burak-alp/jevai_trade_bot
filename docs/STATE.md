@@ -20,6 +20,8 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
 - **macro.paper.v1** (`jevbot macro-paper --telegram`, durum `run/macro-paper`): v1 ağırlıkları backtest ile aynı kodla
   (`jevbot.research.macro`; eşdeğerlik testi), Binance perp fiyatları + gerçek funding, haftalık rebalans, hesaplar 1x ve 2x,
   boştaki nakit T-bill faizi. Günlük çalıştırma: kullanıcının kuracağı Windows görevi (01:30 TR). Gerçek emir yok.
+- **overlay.v1** (llm hesabı, 1x): v1 ağırlıkları × Claude eğimi {0.5, 1, 1.5}; rutin `jevai-macro-overlay` cumartesi 12:00
+  `context-<hafta>.json` → `overlay-<hafta>.json` (istem docs/overlay_prompt.md). 13. hafta futility, 26. hafta GO.
 
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |

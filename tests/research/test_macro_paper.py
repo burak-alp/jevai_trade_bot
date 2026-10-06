@@ -72,18 +72,37 @@ def test_run_once_end_to_end(tmp_path):
     macro.START = date(2024, 1, 1)
     try:
         now = int(np.datetime64(days[-1].isoformat()).astype("datetime64[ms]").astype(int)) + 22 * 3_600_000
-        res = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now)
+        res = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now, headlines=None)
         assert res["rebalanced"] and res["state"]["last_rebalance_week"]
         w = res["state"]["weights"]
         assert any(v > 0 for v in w.values()) and sum(w.values()) <= 1 + 1e-9
         assert abs(res["equity"]["1x"] - (1000 - 0.001 * 1000 * sum(
             v * mp.SYMBOLS[a][1] for a, v in w.items()))) < 1e-6
-        res2 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now + 3_600_000)
+        res2 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now + 3_600_000, headlines=None)
         assert not res2["rebalanced"]                                      # same week, no second rebalance
         assert "Makro trend sanal hesap" in mp.to_text(res2)
         assert len((tmp_path / "ledger.jsonl").read_text().splitlines()) == 3
+        ctx = json.loads((tmp_path / f"context-{res['state']['last_rebalance_week']}.json").read_text(encoding="utf-8"))
+        assert set(ctx["assets"]) == set(macro.ASSETS) and ctx["assets"]["SPY"]["binance"] == "SPYUSDT"
+        held = [a for a, v in w.items() if v > 0]
+        overlay = {"assets": {held[0]: {"tilt": 1, "reason": "x"}, held[-1]: {"tilt": -1, "reason": "y"}}}
+        (tmp_path / f"overlay-{res['state']['last_rebalance_week']}.json").write_text(json.dumps(overlay))
+        res3 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now + 7_200_000, headlines=None)
+        lw = res3["state"]["llm_weights"]
+        assert res3["state"]["llm_applied"] == res["state"]["last_rebalance_week"] and sum(lw.values()) <= 1 + 1e-9
+        assert "Claude yorumu" in mp.to_text(res3)
+        res4 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now + 10_800_000, headlines=None)
+        assert "Claude yorumu" not in mp.to_text(res4)                    # applied once per week
     finally:
         macro.START = old_start
+
+
+def test_apply_overlay():
+    w = {"SPY": 0.3, "GLD": 0.2, "TLT": 0.0, "BTC-USD": 0.1}
+    o = mp.apply_overlay(w, {"SPY": 1, "GLD": -1, "TLT": 1})
+    assert o == pytest.approx({"SPY": 0.45, "GLD": 0.1, "TLT": 0.0, "BTC-USD": 0.1})   # not-held stays 0
+    big = mp.apply_overlay({"SPY": 0.5, "QQQ": 0.4}, {"SPY": 1, "QQQ": 1})
+    assert abs(sum(big.values()) - 1) < 1e-12 and abs(big["SPY"] / big["QQQ"] - 1.25) < 1e-12
 
 
 def test_binance_client_parses():
