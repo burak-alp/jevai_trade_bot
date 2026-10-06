@@ -7,6 +7,12 @@ Kripto (Binance USDⓈ-M) için maliyet sonrası kârlı bot; kaldıraçlı/kald
 öneri → Jev meta-label/veto → deterministik risk. Jev boyut/kaldıraç/stop belirlemez. Gerçek para ancak kanıtla.
 Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) ileride olası; şimdi kapsam dışı.
 
+## GEÇEN (ilk)
+- **macro.trend.v1** varlıklar arası trend (SPY QQQ GLD SLV USO TLT BTC ETH + nakit, ters oynaklık, haftalık, kaldıraçsız):
+  D 2006-15 seçimi 252 g; **T 2016-01→2026-09: +%12.8/yıl [6.6, 20.0], Sharpe 1.09, maks DD %16** (SPY %14.9 / 0.75 / %34;
+  60/40 %8.9 / 0.61 / %27) → GO. Sağlamlık: +1 g gecikme %13.2, 3× maliyet %11.9, kriptosuz %8.8 / 0.78 / %12.6.
+  Eşit ağırlık al-tut T'de %26 (kripto) ama DD %40. Varlık listesi bugünden seçildi (seçim yanlılığı riski, kripto payı ~%5).
+
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |
 |---|---|---|
