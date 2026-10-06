@@ -24,6 +24,8 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
 Bilgi (test değil): slow.v1 FUND 2024'te +0.15 R, 2025-26'da ~0 — tutarsız, kiraz toplanmaz.
 
 ## Çalışanlar
+**06.10 11:45 kullanıcı kararıyla HER ŞEY KAPATILDI:** paper durdu (son tick 11:00 TR), Windows görevi "JevAI Paper"
+ve Claude rutini `jevai-llm-claude-arm` devre dışı (silinmedi). Veri `run/paper-jev` içinde duruyor. Aşağısı arşiv.
 - Jev shadow paper: kullanıcının ayrı PowerShell penceresi; `jevbot paper --state-dir run/paper-jev --jev-shadow
   --jev-base-url https://jev-ai.pro/api`; model `jev-1.13.0`; config `314c11b6a1e1727b`; state `state.slow.v2`.
   Uygulama terminalinde çalıştırma (uygulama kapanınca ölür). `jev-ai.pro` çağrılarını yalnız kullanıcı başlatır.
