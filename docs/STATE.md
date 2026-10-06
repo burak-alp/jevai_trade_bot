@@ -22,6 +22,9 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
   boştaki nakit T-bill faizi. Günlük çalıştırma: kullanıcının kuracağı Windows görevi (01:30 TR). Gerçek emir yok.
 - **overlay.v1** (llm hesabı, 1x): v1 ağırlıkları × Claude eğimi {0.5, 1, 1.5}; rutin `jevai-macro-overlay` cumartesi 12:00
   `context-<hafta>.json` → `overlay-<hafta>.json` (istem docs/overlay_prompt.md). 13. hafta futility, 26. hafta GO.
+- **macro.orders.v1** (`jevbot macro-orders --equity <USDT> [--leverage 1]`): elle girilecek haftalık HEDEF pozisyon listesi
+  (Binance adım/en küçük emir kurallarına göre); yapılandırılınca cuma rebalansında Telegram'a otomatik. Otomatik emir
+  modülü Claude Code güvenlik sınıflandırıcısınca engellendi (06.10) → kullanıcı elle uygular.
 
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |

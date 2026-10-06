@@ -299,7 +299,28 @@ def cmd_macro_paper(args: argparse.Namespace) -> int:
     from jevbot.account import send_telegram
     from jevbot.macro_paper import run_once, to_text
 
-    text = to_text(run_once(Path(args.state_dir)))
+    res = run_once(Path(args.state_dir))
+    texts = [to_text(res)]
+    if res["rebalanced"] and (Path(args.orders_dir) / "config.json").exists():   # weekly manual order list
+        from jevbot.macro_orders import build
+        from jevbot.macro_orders import to_text as orders_text
+        texts.append(orders_text(build(Path(args.orders_dir), Path(args.state_dir))))
+    sys.stdout.reconfigure(encoding="utf-8")
+    for text in texts:
+        sys.stdout.write(text + "\n")
+        if args.telegram:
+            sys.stdout.write(f"telegram: {_run_async(lambda t=text: send_telegram(t))}\n")
+    return 0
+
+
+def cmd_macro_orders(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.account import send_telegram
+    from jevbot.macro_orders import build, to_text
+
+    text = to_text(build(Path(args.state_dir), Path(args.paper_dir), set_equity=args.equity,
+                         set_leverage=args.leverage))
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stdout.write(text + "\n")
     if args.telegram:
@@ -536,7 +557,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("macro-paper", help="macro.trend.v1 live paper on Binance perps (daily; weekly rebalance; no orders)")
     p.add_argument("--state-dir", default="run/macro-paper")
     p.add_argument("--telegram", action="store_true", help="also send the summary (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
+    p.add_argument("--orders-dir", default="run/macro-orders", help="weekly manual order list (if configured)")
     p.set_defaults(func=cmd_macro_paper)
+
+    p = sub.add_parser("macro-orders", help="manual weekly order list for macro.trend.v1 (no keys, nothing sent to Binance)")
+    p.add_argument("--state-dir", default="run/macro-orders")
+    p.add_argument("--paper-dir", default="run/macro-paper")
+    p.add_argument("--equity", type=float, default=None, help="your Binance futures account size in USDT (set once)")
+    p.add_argument("--leverage", type=float, default=None, help="1 = no leverage (default), max 3")
+    p.add_argument("--telegram", action="store_true")
+    p.set_defaults(func=cmd_macro_orders)
 
     p = sub.add_parser("llm-report", help="llm.v1: per-arm settled trades, net bps, AUC")
     p.add_argument("--state-dir", default="run/paper-jev")
