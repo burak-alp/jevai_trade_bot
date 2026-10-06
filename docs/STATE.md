@@ -12,6 +12,9 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
   D 2006-15 seçimi 252 g; **T 2016-01→2026-09: +%12.8/yıl [6.6, 20.0], Sharpe 1.09, maks DD %16** (SPY %14.9 / 0.75 / %34;
   60/40 %8.9 / 0.61 / %27) → GO. Sağlamlık: +1 g gecikme %13.2, 3× maliyet %11.9, kriptosuz %8.8 / 0.78 / %12.6.
   Eşit ağırlık al-tut T'de %26 (kripto) ama DD %40. Varlık listesi bugünden seçildi (seçim yanlılığı riski, kripto payı ~%5).
+- macro.trend.v2 (geniş Binance evreni / short / hedef oynaklık): D seçimi TEMEL yalnız long; T Sharpe 1.03 < 1.09 → GEÇMEDİ,
+  v1 temel kalır. Geniş evren ve short T'de kötüleştirdi. Kaldıraç tablosu (T, tavan 3x, finansman farkı TradFi %1 kripto %5):
+  hedef %10: %14.1/yıl DD %20 | %15: %18.7 DD %29 | %20: %22.0 DD %35 en kötü ay −%16 | %30: %26.4 DD %42 en kötü ay −%23.
 
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |
