@@ -53,6 +53,10 @@ def member_views(state_dir: Path, week: str) -> dict[str, dict[str, int]]:
     if of.exists():
         views["claude (llm)"] = {a: int(v.get("tilt", 0))
                                  for a, v in (json.loads(of.read_text(encoding="utf-8")).get("assets") or {}).items()}
+    gf = d / f"gpt-{week}.json"
+    if gf.exists():
+        views["gpt"] = {a: int(v.get("view", 0))
+                        for a, v in (json.loads(gf.read_text(encoding="utf-8")).get("assets") or {}).items()}
     xf = d / f"context-{week}.json"
     if xf.exists():
         jev = json.loads(xf.read_text(encoding="utf-8")).get("jev") or {}

@@ -45,12 +45,14 @@ def test_status_scorecard_two_weeks(tmp_path):
         (tmp_path / f"committee-{wk}.json").write_text(json.dumps({
             "week": wk, "analysts": {"makro": {"assets": {held[0]: {"view": 1}}}},
             "pm": {"assets": {held[0]: {"tilt": 1}}, "note": "Fed sabit; altın güçlü."}}))
+        (tmp_path / f"gpt-{wk}.json").write_text(json.dumps({"assets": {held[0]: {"view": -1}}}))
         px2 = dict(px)
         px2[mp.SYMBOLS[held[0]][0]] = 110.0                                  # the favoured asset rises 10 %
         r2 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px2), now=t0 + 7 * 86_400_000, headlines=None)
         assert r2["rebalanced"]
         sc = md.scorecard(tmp_path)
         assert sc["analist:makro"]["hit"] == 1.0 and abs(sc["komite (PM)"]["mean_bps"] - 1000) < 1e-6
+        assert sc["gpt"]["hit"] == 0.0 and abs(sc["gpt"]["mean_bps"] + 1000) < 1e-6
         text = md.status_text(tmp_path, px2)
         assert "Varlık sınıfı" in text and "Fed sabit" in text and "Karne" in text
         s = md.status(tmp_path, px2)

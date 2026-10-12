@@ -15,3 +15,8 @@ Kullanıcı hedefi: dünyayı (merkez bankaları, büyük oyuncular, jeopolitik,
 - Karne (bilgi): her üyenin (4 analist, PM, llm, Jev) sıfır olmayan görüşleri haftalık gerçekleşen getiriyle puanlanır
   (isabet, ortalama işaretli getiri). Ağırlık değişikliği yalnız 26. hafta sonrası, yeni ön kayıtla.
 - İstem, eğim ölçeği ve kurallar bu süre boyunca değişmez.
+
+## Değişiklik (13.10, değerlendirme başlamadan; W41 çalışması deneme sayılır, tüm eğimler 0'dı)
+- GPT üyesi eklendi: `gpt-<hafta>.json` (docs/gpt_member_prompt.md, Codex yerelde yazar); PM istemine Jev + GPT
+  üyeleri bölümü eklendi (committee_prompt.md adım 3). PM = rutinin modeli (kullanıcı Opus seçer); analistler sonnet.
+- Değerlendirme penceresi W42'den (16.10 rebalansı) başlar: 13. hafta futility, 26. hafta GO aynen.

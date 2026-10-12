@@ -22,8 +22,13 @@ BTC-USD, ETH-USD.
    Her analist SADECE şu JSON'u döndürür (8 varlığın hepsi; alanı dışındaysa view 0):
    `{"assets": {"SPY": {"view": -1|0|1, "confidence": 0-1, "reason": "<≤200 karakter>"}, ...},
      "facts": [{"text": "<olgu>", "source": "<kurum/site>", "date": "YYYY-MM-DD"}, ... en fazla 6]}`
-3. Bağlamdaki `jev` alanı (varsa) Jev modelinin 5 günlük yön olasılıklarıdır. Not: Jev'in kripto yön testi
-   (06.10) yazı turadan kötüydü; bilgi olarak oku, tek başına gerekçe yapma.
+3. Diğer komite üyeleri (varsa oku, yoksa onlarsız devam et):
+   - Bağlamdaki `jev` alanı: Jev modelinin 5 günlük yön olasılıkları. Not: Jev'in kripto yön testi (06.10) yazı
+     turadan kötüydü; bilgi olarak oku, tek başına gerekçe yapma.
+   - `gpt-<hafta>.json`: GPT'nin bağımsız görüşü ve kaynaklı olguları (docs/gpt_member_prompt.md). Olgularını
+     analistlerinkiyle aynı ölçütle değerlendir; bağımsız ve kaynaklı bir olgu "iki olgu" kuralına sayılabilir.
+   Karar mercii sensin (PM); üyelerin oy çokluğu değil, kaynaklı olguların gücü belirler. Masa notunda Jev ve GPT'nin
+   görüşüne kısaca değin (aynı/ayrı düşündükleri yerler).
 4. Karar kuralı: Bir varlığı ancak en az iki bağımsız, kaynaklı olgu aynı yönü gösteriyorsa ve güçlü bir karşı olgu
    yoksa eğ; aksi halde 0. Fiyatın zaten yansıttığı bilinen bilgiye (açıklanmış kararlar, herkesin beklediği veriler)
    dayanarak eğme. Emin değilsen 0 meşru ve çoğu hafta doğru cevaptır.
