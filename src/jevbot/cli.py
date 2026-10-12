@@ -344,7 +344,8 @@ def cmd_telegram_listen(args: argparse.Namespace) -> int:
     from jevbot.telegram_bot import listen, status_from
 
     print("telegram-listen: 'durum' komutunu dinliyor (Ctrl+C ile dur)", flush=True)
-    listen(status_from(Path(args.state_dir)), Path(args.state_dir) / "telegram_offset.txt")
+    listen(status_from(Path(args.state_dir)), Path(args.state_dir) / "telegram_offset.txt",
+           alert_dir=Path(args.state_dir))
     return 0
 
 

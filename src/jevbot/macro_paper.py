@@ -28,6 +28,7 @@ ACCOUNTS = {"1x": 1.0, "2x": 2.0}
 LLM = "llm"                                             # overlay.v1 account (1x, v1 weights tilted by Claude's view)
 COMMITTEE = "committee"                                 # committee.v1 account (1x, tilted by the PM after analysts)
 OVERLAYS = {LLM: "overlay", COMMITTEE: "committee"}     # account -> weekly tilt file prefix
+BRAKE = "fren"                                          # macro.brake.v1 account: v1 + 3-sigma daily asset brake
 TILT = {-1: 0.5, 0: 1.0, 1: 1.5}
 START_EQUITY = 1000.0
 LOOKBACK = (252,)
@@ -208,6 +209,33 @@ def _read_tilts(path: Path, kind: str) -> dict[str, int] | None:
         return None
 
 
+def brake_check(st: dict[str, Any], data: dict[str, dict[str, float]], latest: date, did: bool,
+                px: dict[str, float], rows: list[dict[str, Any]], now: int) -> list[str]:
+    """macro.brake.v1 on the fren account: every data day not yet checked (only the rebalance day itself after a
+    rebalance), an asset with a <= -3 sigma daily drop goes to cash until the next weekly rebalance."""
+    days, P, _ = macro.align(data, macro.ASSETS, end=latest + timedelta(days=1))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        R = np.vstack([np.full(P.shape[1], np.nan), P[1:] / P[:-1] - 1])
+    br = st["brake"]
+    checked = latest if did else date.fromisoformat(br["checked"])
+    todo = [i for i, d in enumerate(days) if d > checked or (did and d == latest)]
+    frozen = set(br["frozen"])
+    notes = []
+    for t in todo:
+        for k in np.where(macro.brake_hits(R, t))[0]:
+            a = macro.ASSETS[k]
+            if a not in frozen and st["weights"].get(a, 0) > 0:
+                frozen.add(a)
+                notes.append(f"{NAMES[a]} {R[t, k]:+.1%} ({days[t]:%d.%m})")
+    br["checked"] = str(latest)
+    if notes:
+        br["frozen"] = sorted(frozen)
+        w = {a: (0.0 if a in frozen else v) for a, v in st["weights"].items()}
+        c = rebalance(st["accounts"][BRAKE], w, 1.0, px)
+        rows.append({"kind": "brake", "at": now, "frozen": br["frozen"], "weights": w, "cost": c})
+    return notes
+
+
 def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: Binance | None = None,
              now: int | None = None, headlines: Callable[[str, int], list[str]] | None = _headlines,
              jev: bool = False) -> dict[str, Any]:
@@ -235,6 +263,12 @@ def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: 
                     ctx = build_context(data, latest, st["weights"], now, headlines)
                     ctx["week"] = st["last_rebalance_week"]
                     cf.write_text(json.dumps(ctx, indent=1, ensure_ascii=False), encoding="utf-8")
+    if BRAKE not in st["accounts"]:
+        st["accounts"][BRAKE] = {"balance": START_EQUITY, "pos": {}, "last_mark": now}
+        st.setdefault("since", {})[BRAKE] = now
+        st["brake"] = {"frozen": [], "checked": str(latest)}
+        if st["last_rebalance_week"]:
+            rebalance(st["accounts"][BRAKE], st["weights"], 1.0, px)
     rows: list[dict[str, Any]] = []
     marks = {n: mark(st["accounts"][n], px, bn, now, cash_daily) for n in st["accounts"]}
     did = rebalance_due(st["last_rebalance_week"], latest, today)
@@ -245,6 +279,8 @@ def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: 
         for name in OVERLAYS:                              # v1 until this week's tilt file arrives
             costs[name] = rebalance(st["accounts"][name], weights, 1.0, px)
             applied[name] = None
+        costs[BRAKE] = rebalance(st["accounts"][BRAKE], weights, 1.0, px)
+        st["brake"]["frozen"] = []                         # brakes reset at the weekly rebalance (as the backtest)
         st["last_rebalance_week"] = week_of(latest)
         ctx = build_context(data, latest, weights, now, headlines)
         if jev:
@@ -255,6 +291,7 @@ def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: 
         st["weights"] = weights
         rows.append({"kind": "rebalance", "at": now, "data_date": str(latest), "weights": weights, "prev": prev,
                      "costs": costs, "prices": {SYMBOLS[a][0]: px.get(SYMBOLS[a][0]) for a in weights}})
+    st["brake_note"] = brake_check(st, data, latest, did, px, rows, now)
     wk = st["last_rebalance_week"]
     st["notes"], st["committee_note"] = {}, None
     for name, prefix in OVERLAYS.items():
@@ -291,7 +328,7 @@ def to_text(res: dict[str, Any]) -> str:
     when = datetime.fromtimestamp(st["history"][-1]["at"] / 1000, TR).strftime("%d.%m %H:%M")
     hist = st["history"]
     lines = [f"🌍 Makro trend sanal hesap — {when}"]
-    for n in [*ACCOUNTS, *OVERLAYS]:
+    for n in [*ACCOUNTS, *OVERLAYS, BRAKE]:
         if n not in res["equity"]:
             continue
         eq = res["equity"][n]
@@ -313,6 +350,8 @@ def to_text(res: dict[str, Any]) -> str:
         t = {1: "↑", -1: "↓"}
         moves = [f"{NAMES[a]} {t[v]}" for a, v in tilts.items() if v]
         lines.append(f"{labels[name]}: " + (", ".join(moves) if moves else "değişiklik yok"))
+    if st.get("brake_note"):
+        lines.append("🛑 Fren (fren hesabı): " + ", ".join(st["brake_note"]) + " → dengelemeye kadar nakit")
     if st.get("committee_note"):
         lines.append("🏛 Komite notu:\n" + st["committee_note"])
     lines.append("Sanal hesap; gerçek para yok. Kural: 1 yıllık getirisi nakitten iyi olanı tut, ters oynaklıkla dağıt.")

@@ -33,6 +33,9 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
   jeopolitik, kripto) + Jev 5 g olasılıkları (gece görevi, rebalansta) → PM eğimi + Türkçe masa notu →
   `committee` hesabı. Karne `jevbot macro-status`; Telegram 'durum' için `jevbot telegram-listen` (kullanıcı başlatır).
   Ön kayıt reports/remote/20261013T-committee-prereg.md (13. hafta futility, 26. hafta GO).
+- **macro.brake.v1 GEÇTİ** (13.10): varlık günlük getirisi ≤ −3σ (60 g) → dengelemeye kadar nakit. T: Sharpe 1.20 (v1 1.09),
+  maks DD %10.9 (v1 %16.1); 2.5–4σ arası sağlam; günlük dengeleme daha kötü (0.97). Paper'da `fren` hesabı (ortak kod
+  `macro.brake_hits`). Olay nöbeti rutini `jevai-olay-nobeti` 09/15/21 → alert-*.json → Telegram dinleyicisi iletir (yalnız bilgi).
 
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |

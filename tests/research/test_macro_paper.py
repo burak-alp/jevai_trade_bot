@@ -99,7 +99,7 @@ def test_run_once_end_to_end(tmp_path):
         t4 = mp.to_text(res4)
         assert "Claude yorumu" not in t4 and "Komite kararı" in t4                 # each applied once per week
         assert res4["state"]["overlay_weights"]["committee"][held[0]] < w[held[0]]
-        assert set(res4["equity"]) == {"1x", "2x", "llm", "committee"}
+        assert set(res4["equity"]) == {"1x", "2x", "llm", "committee", "fren"}
         attr = res4["state"]["accounts"]["1x"]["pnl_sym"]                          # P&L attribution = equity change
         assert abs(sum(attr.values()) - (res4["equity"]["1x"] - 1000)) < 1e-6
     finally:
@@ -136,3 +136,34 @@ def test_binance_client_parses():
         return httpx.Response(200, json=[{"fundingRate": "0.0001"}, {"fundingRate": "-0.00005"}])
     bn = mp.Binance(transport=httpx.MockTransport(handler))
     assert bn.prices() == {"SPYUSDT": 700.5} and abs(bn.funding("SPYUSDT", 0, 1) - 0.00005) < 1e-12
+
+
+def test_brake_account_freezes_crashed_asset(tmp_path):
+    days = [d for d in (date(2024, 1, 1) + timedelta(days=i) for i in range(500)) if d.weekday() < 5]
+    rng = np.random.default_rng(3)
+    data = {a: {d.isoformat(): float(v) for d, v in zip(days, 100 * np.exp(np.cumsum(rng.normal(0.002, 0.01, len(days)))))}
+            for a in macro.ASSETS}
+    data[macro.CASH] = {d.isoformat(): 4.0 for d in days}
+    px = {sym: 100.0 for sym, _ in mp.SYMBOLS.values()}
+    old = macro.START
+    macro.START = date(2024, 1, 1)
+    try:
+        fri = [d for d in days if d.weekday() == 4][-2]
+        cut = lambda end: {a: {k: v for k, v in s.items() if k <= end.isoformat()} for a, s in data.items()}  # noqa: E731
+        t0 = int(np.datetime64(fri.isoformat()).astype("datetime64[ms]").astype(int)) + 26 * 3_600_000
+        r1 = mp.run_once(tmp_path, data_fn=lambda: cut(fri), bn=FakeBn(px), now=t0, headlines=None)
+        held = [a for a, v in r1["state"]["weights"].items() if v > 0]
+        assert r1["rebalanced"] and held and not r1["state"]["brake_note"]
+        mon = fri + timedelta(days=3)
+        crash = cut(mon)
+        crash[held[0]][mon.isoformat()] = crash[held[0]][fri.isoformat()] * 0.85     # -15 % day (>> 3 sigma)
+        r2 = mp.run_once(tmp_path, data_fn=lambda: crash, bn=FakeBn(px), now=t0 + 3 * 86_400_000, headlines=None)
+        assert not r2["rebalanced"] and r2["state"]["brake"]["frozen"] == [held[0]]
+        sym = mp.SYMBOLS[held[0]][0]
+        assert sym not in r2["state"]["accounts"]["fren"]["pos"] and sym in r2["state"]["accounts"]["1x"]["pos"]
+        assert "Fren" in mp.to_text(r2)
+        r3 = mp.run_once(tmp_path, data_fn=lambda: crash, bn=FakeBn(px), now=t0 + 3 * 86_400_000 + 3_600_000,
+                         headlines=None)
+        assert not r3["state"]["brake_note"]                                         # same day not re-checked
+    finally:
+        macro.START = old

@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from jevbot.macro_paper import ACCOUNTS, OVERLAYS, START_EQUITY, SYMBOLS, week_of
+from jevbot.macro_paper import ACCOUNTS, BRAKE, OVERLAYS, START_EQUITY, SYMBOLS, week_of
 
 TR = timezone(timedelta(hours=3))
 CLASSES = {"ABD hisse": ["SPY", "QQQ"], "Değerli metal": ["GLD", "SLV"], "Enerji": ["USO"], "Tahvil": ["TLT"],
@@ -113,7 +113,7 @@ def status_text(state_dir: Path, px: dict[str, float]) -> str:
     when = datetime.now(TR).strftime("%d.%m %H:%M")
     lines = [f"📊 Durum — {when}"]
     lines.append(" | ".join(f"{n} {v:,.2f}$ ({v / START_EQUITY - 1:+.2%})"
-                            for n, v in s["equity"].items() if n in (*ACCOUNTS, *OVERLAYS)))
+                            for n, v in s["equity"].items() if n in (*ACCOUNTS, *OVERLAYS, BRAKE)))
     lines.append("Varlık sınıfı (1x hesap, başlangıçtan beri):")
     for cls, v in s["classes"].items():
         tag = f"şu an %{v['weight'] * 100:.0f}" if v["weight"] > 0.0005 else "şu an pozisyon yok"

@@ -5,6 +5,7 @@ are never printed (errors are reported by type only, because HTTP errors can con
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Callable
@@ -40,8 +41,35 @@ def handle_updates(updates: list[dict], chat_id: str, status: Callable[[], str])
     return nxt, out
 
 
+def pending_alerts(alert_dir: Path | None) -> list[tuple[Path, str]]:
+    """Unsent event-watch files (alert-*.json) as (path, message); the sent list lives in alerts_sent.txt."""
+    if alert_dir is None or not alert_dir.exists():
+        return []
+    sent_f = alert_dir / "alerts_sent.txt"
+    sent = set(sent_f.read_text(encoding="utf-8").split()) if sent_f.exists() else set()
+    out = []
+    for f in sorted(alert_dir.glob("alert-*.json")):
+        if f.name in sent:
+            continue
+        try:
+            a = json.loads(f.read_text(encoding="utf-8"))
+            arrows = ", ".join(f"{k} {v}" for k, v in (a.get("assets") or {}).items())
+            msg = (f"🚨 Olay nöbeti ({a.get('severity', '?')}): {a.get('title', '')}\n{a.get('summary', '')}"
+                   + (f"\nEtkilenen: {arrows}" if arrows else "")
+                   + "\n(Bilgi: işlem kararını fiyat freni ve haftalık komite verir.)")
+        except (OSError, ValueError, AttributeError):
+            msg = f"🚨 Olay nöbeti: okunamayan uyarı dosyası {f.name}"
+        out.append((f, msg))
+    return out
+
+
+def mark_sent(alert_dir: Path, name: str) -> None:
+    with open(alert_dir / "alerts_sent.txt", "a", encoding="utf-8") as fh:
+        fh.write(name + "\n")
+
+
 def listen(status: Callable[[], str], offset_file: Path, *, transport: httpx.BaseTransport | None = None,
-           once: bool = False, poll_s: int = 50) -> None:
+           once: bool = False, poll_s: int = 50, alert_dir: Path | None = None) -> None:
     token, chat = _secret("TELEGRAM_BOT_TOKEN"), _secret("TELEGRAM_CHAT_ID")
     if not token or not chat:
         raise SystemExit("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID tanımlı değil")
@@ -57,6 +85,9 @@ def listen(status: Callable[[], str], offset_file: Path, *, transport: httpx.Bas
                 for text in replies:
                     for i in range(0, len(text), 4000):
                         c.post(f"{base}/sendMessage", json={"chat_id": chat, "text": text[i:i + 4000]})
+                for f, msg in pending_alerts(alert_dir):
+                    if c.post(f"{base}/sendMessage", json={"chat_id": chat, "text": msg[:4000]}).status_code == 200:
+                        mark_sent(alert_dir, f.name)                   # type: ignore[arg-type]
                 if nxt is not None:
                     offset = nxt
                     offset_file.parent.mkdir(parents=True, exist_ok=True)

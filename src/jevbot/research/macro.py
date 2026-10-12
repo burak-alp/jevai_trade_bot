@@ -75,6 +75,18 @@ def align(data, assets: list[str] | None = None, end: date | None = None):
     return [date.fromisoformat(d) for d in days], P, cash
 
 
+BRAKE_SIGMA = 3.0                                       # macro.brake.v1 (passed 2026-10-13)
+
+
+def brake_hits(R: np.ndarray, t: int, k_sigma: float = BRAKE_SIGMA) -> np.ndarray:
+    """Assets whose day-t return is <= -k x their daily volatility over the VOL_WIN days before t (bool per asset)."""
+    if t < VOL_WIN:
+        return np.zeros(R.shape[1], bool)
+    sd = np.nanstd(R[t - VOL_WIN:t], axis=0)
+    with np.errstate(invalid="ignore"):
+        return np.isfinite(R[t]) & np.isfinite(sd) & (R[t] <= -k_sigma * sd)
+
+
 def strategy(P, cash, days, lbs: tuple[int, ...], return_last: bool = False):
     T, N = P.shape
     with np.errstate(invalid="ignore", divide="ignore"):

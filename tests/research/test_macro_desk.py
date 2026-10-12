@@ -83,3 +83,21 @@ def test_listen_once(tmp_path, monkeypatch):
         return httpx.Response(200, json={"ok": True})
     tb.listen(lambda: "S" * 4500, tmp_path / "off", transport=httpx.MockTransport(handler), once=True, poll_s=0)
     assert [len(m["text"]) for m in sent] == [4000, 500] and (tmp_path / "off").read_text() == "11"
+
+
+def test_alerts_forwarded_once(tmp_path, monkeypatch):
+    monkeypatch.setattr("jevbot.telegram_bot._secret", lambda v: "tok" if v.endswith("TOKEN") else "42")
+    (tmp_path / "alert-20261013-0900.json").write_text(json.dumps({
+        "severity": "kritik", "title": "Hürmüz'de tanker saldırısı", "summary": "Petrol sert yükseldi.",
+        "assets": {"USO": "+", "SPY": "-"}}), encoding="utf-8")
+    sent = []
+
+    def handler(req):
+        if req.url.path.endswith("getUpdates"):
+            return httpx.Response(200, json={"ok": True, "result": []})
+        sent.append(json.loads(req.content)["text"])
+        return httpx.Response(200, json={"ok": True})
+    for _ in range(2):
+        tb.listen(lambda: "S", tmp_path / "off", transport=httpx.MockTransport(handler), once=True, poll_s=0,
+                  alert_dir=tmp_path)
+    assert len(sent) == 1 and "Hürmüz" in sent[0] and "USO +" in sent[0]
