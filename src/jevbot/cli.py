@@ -299,7 +299,7 @@ def cmd_macro_paper(args: argparse.Namespace) -> int:
     from jevbot.account import send_telegram
     from jevbot.macro_paper import run_once, to_text
 
-    res = run_once(Path(args.state_dir))
+    res = run_once(Path(args.state_dir), jev=not args.no_jev)
     texts = [to_text(res)]
     if res["rebalanced"] and (Path(args.orders_dir) / "config.json").exists():   # weekly manual order list
         from jevbot.macro_orders import build
@@ -320,6 +320,31 @@ def cmd_macro_paper(args: argparse.Namespace) -> int:
         sys.stdout.write(text + "\n")
         if args.telegram:
             sys.stdout.write(f"telegram: {_run_async(lambda t=text: send_telegram(t))}\n")
+    return 0
+
+
+def cmd_macro_status(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.account import send_telegram
+    from jevbot.macro_desk import status_text
+    from jevbot.macro_paper import Binance
+
+    text = status_text(Path(args.state_dir), Binance().prices())
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.write(text + "\n")
+    if args.telegram:
+        sys.stdout.write(f"telegram: {_run_async(lambda: send_telegram(text))}\n")
+    return 0
+
+
+def cmd_telegram_listen(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from jevbot.telegram_bot import listen, status_from
+
+    print("telegram-listen: 'durum' komutunu dinliyor (Ctrl+C ile dur)", flush=True)
+    listen(status_from(Path(args.state_dir)), Path(args.state_dir) / "telegram_offset.txt")
     return 0
 
 
@@ -597,7 +622,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--telegram", action="store_true", help="also send the summary (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
     p.add_argument("--orders-dir", default="run/macro-orders", help="weekly manual order list (if configured)")
     p.add_argument("--live-dir", default="run/macro-live", help="automatic bot state (runs if configured)")
+    p.add_argument("--no-jev", action="store_true", help="skip Jev's weekly committee view (default: ask if JEV_API_KEY)")
     p.set_defaults(func=cmd_macro_paper)
+
+    p = sub.add_parser("macro-status", help="desk status: accounts, P&L by asset class, committee note, scorecard")
+    p.add_argument("--state-dir", default="run/macro-paper")
+    p.add_argument("--telegram", action="store_true")
+    p.set_defaults(func=cmd_macro_status)
+
+    p = sub.add_parser("telegram-listen", help="answer 'durum' on Telegram (only your TELEGRAM_CHAT_ID); runs until Ctrl+C")
+    p.add_argument("--state-dir", default="run/macro-paper")
+    p.set_defaults(func=cmd_telegram_listen)
 
     p = sub.add_parser("macro-live", help="automatic macro bot on your Binance account (dry-run unless --mode live, "
                                           "JEVBOT_LIVE=YES and keys)")

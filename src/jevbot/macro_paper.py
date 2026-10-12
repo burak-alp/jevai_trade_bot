@@ -26,6 +26,8 @@ NAMES = {"SPY": "S&P 500", "QQQ": "Nasdaq", "GLD": "Altın", "SLV": "Gümüş", 
          "BTC-USD": "BTC", "ETH-USD": "ETH"}
 ACCOUNTS = {"1x": 1.0, "2x": 2.0}
 LLM = "llm"                                             # overlay.v1 account (1x, v1 weights tilted by Claude's view)
+COMMITTEE = "committee"                                 # committee.v1 account (1x, tilted by the PM after analysts)
+OVERLAYS = {LLM: "overlay", COMMITTEE: "committee"}     # account -> weekly tilt file prefix
 TILT = {-1: 0.5, 0: 1.0, 1: 1.5}
 START_EQUITY = 1000.0
 LOOKBACK = (252,)
@@ -73,12 +75,16 @@ def mark(acc: dict[str, Any], px: dict[str, float], bn: Binance, now: int, cash_
     """Funding + idle-cash interest since the last mark, booked into the balance."""
     since = acc["last_mark"]
     fund = 0.0
+    attr = acc.setdefault("pnl_sym", {})
     for s, p in acc["pos"].items():
         if p["qty"] and s in px:
-            fund -= p["qty"] * px[s] * bn.funding(s, since, now)          # long pays positive funding
+            f = -p["qty"] * px[s] * bn.funding(s, since, now)              # long pays positive funding
+            fund += f
+            attr[s] = attr.get(s, 0.0) + f
     eq = _equity(acc, px)
     gross = sum(abs(p["qty"]) * px[s] for s, p in acc["pos"].items() if s in px)
     interest = max(eq - gross, 0.0) * cash_daily * (now - since) / DAY * 252 / 365
+    attr["CASH"] = attr.get("CASH", 0.0) + interest
     acc["balance"] += fund + interest
     acc["last_mark"] = now
     return {"funding": fund, "interest": interest}
@@ -86,6 +92,10 @@ def mark(acc: dict[str, Any], px: dict[str, float], bn: Binance, now: int, cash_
 
 def rebalance(acc: dict[str, Any], weights: dict[str, float], lev: float, px: dict[str, float]) -> float:
     """Realize P&L at current prices and move to the target notionals; returns the cost paid."""
+    attr = acc.setdefault("pnl_sym", {})
+    for s, p in acc["pos"].items():
+        if s in px:
+            attr[s] = attr.get(s, 0.0) + p["qty"] * (px[s] - p["entry"])
     acc["balance"] = _equity(acc, px)
     old = {s: p["qty"] * px[s] for s, p in acc["pos"].items() if s in px}
     eq = acc["balance"]
@@ -93,10 +103,14 @@ def rebalance(acc: dict[str, Any], weights: dict[str, float], lev: float, px: di
     for a, w in weights.items():
         sym, factor = SYMBOLS[a]
         notional = w * lev * factor * eq
-        cost += macro.COST * abs(notional - old.pop(sym, 0.0))
+        c = macro.COST * abs(notional - old.pop(sym, 0.0))
+        cost += c
+        attr[sym] = attr.get(sym, 0.0) - c
         if notional and sym in px:
             new_pos[sym] = {"qty": notional / px[sym], "entry": px[sym]}
-    cost += macro.COST * sum(abs(v) for v in old.values())
+    for sym, v in old.items():
+        attr[sym] = attr.get(sym, 0.0) - macro.COST * abs(v)
+        cost += macro.COST * abs(v)
     acc["balance"] -= cost
     acc["pos"] = new_pos
     return cost
@@ -142,8 +156,61 @@ def _headlines(asset: str, now: int) -> list[str]:
         return []
 
 
+JEV_BASE = "https://jev-ai.pro/api"
+
+
+def jev_views(ctx: dict[str, Any], client: Any = None) -> dict[str, Any]:
+    """Jev as a committee member: P(up/flat/down) over the next 5 trading days per asset, band = half a weekly
+    standard deviation (from the 60 d volatility). Needs JEV_API_KEY; any failure -> {} (the committee runs without)."""
+    import asyncio
+
+    from jevbot.judgment.client import JevClient, load_api_key, pick_model
+
+    if client is None and not load_api_key():
+        return {}
+
+    async def go() -> dict[str, Any]:
+        jc = client or JevClient(base_url=JEV_BASE)
+        try:
+            model, _ = pick_model(await jc.models())
+            if not model:
+                return {}
+            out: dict[str, Any] = {"model": model}
+            for a, v in ctx["assets"].items():
+                band = max(0.5, round(0.5 * (v.get("vol_60d_pct") or 20) * (5 / 252) ** 0.5, 1))
+                q = {"direction_5d": {"type": "choice",
+                                      "instructions": f"Over the next 5 trading days, will this asset's price change be "
+                                                      f"above +{band}% (up), below -{band}% (down), or in between (flat)?",
+                                      "criteria": {"up": f"above +{band}%", "flat": f"between -{band}% and +{band}%",
+                                                   "down": f"below -{band}%"}}}
+                state = {"asset": a, **{k: v.get(k) for k in ("name", "ret_1m_pct", "ret_3m_pct", "ret_12m_pct",
+                                                               "vol_60d_pct", "headlines")}}
+                r = await jc.ask(model, state, q)
+                if r.get("status") == "ok":
+                    out[a] = {k: round(r["probs"][f"direction_5d.{k}"], 3) for k in ("up", "flat", "down")}
+                    out[a]["band_pct"] = band
+            return out
+        finally:
+            if client is None:
+                await jc.aclose()
+    try:
+        return asyncio.run(go())
+    except Exception:                                     # noqa: BLE001 - optional member
+        return {}
+
+
+def _read_tilts(path: Path, kind: str) -> dict[str, int] | None:
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        assets = d["pm"]["assets"] if kind == "committee" else d["assets"]
+        return {a: int(v["tilt"]) for a, v in assets.items() if a in macro.ASSETS and int(v["tilt"]) in TILT}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: Binance | None = None,
-             now: int | None = None, headlines: Callable[[str, int], list[str]] | None = _headlines) -> dict[str, Any]:
+             now: int | None = None, headlines: Callable[[str, int], list[str]] | None = _headlines,
+             jev: bool = False) -> dict[str, Any]:
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     sf = state_dir / "state.json"
@@ -156,15 +223,18 @@ def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: 
     st = json.loads(sf.read_text(encoding="utf-8")) if sf.exists() else {
         "accounts": {n: {"balance": START_EQUITY, "pos": {}, "last_mark": now} for n in ACCOUNTS},
         "last_rebalance_week": None, "weights": {}, "history": []}
-    if LLM not in st["accounts"]:
-        st["accounts"][LLM] = {"balance": START_EQUITY, "pos": {}, "last_mark": now}
-        st["llm_since"], st["llm_applied"] = now, None
-        if st["last_rebalance_week"]:                      # added mid-week: start on v1's current weights
-            rebalance(st["accounts"][LLM], st["weights"], 1.0, px)
-            ctx = build_context(data, latest, st["weights"], now, headlines)
-            ctx["week"] = st["last_rebalance_week"]
-            (state_dir / f"context-{ctx['week']}.json").write_text(json.dumps(ctx, indent=1, ensure_ascii=False),
-                                                                   encoding="utf-8")
+    applied = st.setdefault("applied", {LLM: st.get("llm_applied")} if "llm_applied" in st else {})
+    for name in OVERLAYS:
+        if name not in st["accounts"]:
+            st["accounts"][name] = {"balance": START_EQUITY, "pos": {}, "last_mark": now}
+            st.setdefault("since", {})[name], applied[name] = now, None
+            if st["last_rebalance_week"]:                  # added mid-week: start on v1's current weights
+                rebalance(st["accounts"][name], st["weights"], 1.0, px)
+                cf = state_dir / f"context-{st['last_rebalance_week']}.json"
+                if not cf.exists():
+                    ctx = build_context(data, latest, st["weights"], now, headlines)
+                    ctx["week"] = st["last_rebalance_week"]
+                    cf.write_text(json.dumps(ctx, indent=1, ensure_ascii=False), encoding="utf-8")
     rows: list[dict[str, Any]] = []
     marks = {n: mark(st["accounts"][n], px, bn, now, cash_daily) for n in st["accounts"]}
     did = rebalance_due(st["last_rebalance_week"], latest, today)
@@ -172,9 +242,13 @@ def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: 
     if did:
         for n, lev in ACCOUNTS.items():
             costs[n] = rebalance(st["accounts"][n], weights, lev, px)
-        costs[LLM] = rebalance(st["accounts"][LLM], weights, 1.0, px)          # v1 until Claude's overlay arrives
-        st["last_rebalance_week"], st["llm_applied"] = week_of(latest), None
+        for name in OVERLAYS:                              # v1 until this week's tilt file arrives
+            costs[name] = rebalance(st["accounts"][name], weights, 1.0, px)
+            applied[name] = None
+        st["last_rebalance_week"] = week_of(latest)
         ctx = build_context(data, latest, weights, now, headlines)
+        if jev:
+            ctx["jev"] = jev_views(ctx)
         (state_dir / f"context-{ctx['week']}.json").write_text(json.dumps(ctx, indent=1, ensure_ascii=False),
                                                                encoding="utf-8")
         prev = st.get("weights", {})
@@ -182,19 +256,26 @@ def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: 
         rows.append({"kind": "rebalance", "at": now, "data_date": str(latest), "weights": weights, "prev": prev,
                      "costs": costs, "prices": {SYMBOLS[a][0]: px.get(SYMBOLS[a][0]) for a in weights}})
     wk = st["last_rebalance_week"]
-    of = state_dir / f"overlay-{wk}.json"
-    st["llm_note"] = None
-    if wk and st.get("llm_applied") != wk and of.exists():
-        try:
-            tilts = {a: int(v["tilt"]) for a, v in json.loads(of.read_text(encoding="utf-8"))["assets"].items()
-                     if a in macro.ASSETS and int(v["tilt"]) in TILT}
-        except (ValueError, KeyError, TypeError):
-            tilts = None
-        if tilts is not None:
-            lw = apply_overlay(st["weights"], tilts)
-            c = rebalance(st["accounts"][LLM], lw, 1.0, px)
-            st["llm_applied"], st["llm_weights"], st["llm_note"] = wk, lw, tilts
-            rows.append({"kind": "overlay", "at": now, "week": wk, "tilts": tilts, "weights": lw, "cost": c})
+    st["notes"], st["committee_note"] = {}, None
+    for name, prefix in OVERLAYS.items():
+        of = state_dir / f"{prefix}-{wk}.json"
+        if not wk or applied.get(name) == wk or not of.exists():
+            continue
+        tilts = _read_tilts(of, prefix)
+        if tilts is None:
+            continue
+        lw = apply_overlay(st["weights"], tilts)
+        c = rebalance(st["accounts"][name], lw, 1.0, px)
+        applied[name] = wk
+        st.setdefault("overlay_weights", {})[name] = lw
+        st["notes"][name] = tilts
+        if name == COMMITTEE:
+            try:
+                st["committee_note"] = str(json.loads(of.read_text(encoding="utf-8"))["pm"].get("note", ""))[:1500]
+            except (OSError, ValueError, KeyError):
+                st["committee_note"] = ""
+        rows.append({"kind": "overlay", "account": name, "at": now, "week": wk, "tilts": tilts, "weights": lw,
+                     "cost": c})
     eqs = {n: _equity(st["accounts"][n], px) for n in st["accounts"]}
     st["history"].append({"at": now, **eqs})
     rows.append({"kind": "mark", "at": now, "data_date": str(latest), "equity": eqs, "marks": marks})
@@ -210,7 +291,7 @@ def to_text(res: dict[str, Any]) -> str:
     when = datetime.fromtimestamp(st["history"][-1]["at"] / 1000, TR).strftime("%d.%m %H:%M")
     hist = st["history"]
     lines = [f"🌍 Makro trend sanal hesap — {when}"]
-    for n in [*ACCOUNTS, LLM]:
+    for n in [*ACCOUNTS, *OVERLAYS]:
         if n not in res["equity"]:
             continue
         eq = res["equity"][n]
@@ -227,9 +308,12 @@ def to_text(res: dict[str, Any]) -> str:
                          f"({p['qty'] * (px[s] - p['entry']):+.2f}$)")
     if res["rebalanced"]:
         lines.append(f"🔄 Haftalık yeniden dengeleme yapıldı (veri {res['latest']:%d.%m}).")
-    if st.get("llm_note"):
+    labels = {LLM: "🧠 Claude yorumu uygulandı (llm hesabı)", COMMITTEE: "🏛 Komite kararı uygulandı (committee hesabı)"}
+    for name, tilts in (st.get("notes") or {}).items():
         t = {1: "↑", -1: "↓"}
-        moves = [f"{NAMES[a]} {t[v]}" for a, v in st["llm_note"].items() if v]
-        lines.append("🧠 Claude yorumu uygulandı (llm hesabı): " + (", ".join(moves) if moves else "değişiklik yok"))
+        moves = [f"{NAMES[a]} {t[v]}" for a, v in tilts.items() if v]
+        lines.append(f"{labels[name]}: " + (", ".join(moves) if moves else "değişiklik yok"))
+    if st.get("committee_note"):
+        lines.append("🏛 Komite notu:\n" + st["committee_note"])
     lines.append("Sanal hesap; gerçek para yok. Kural: 1 yıllık getirisi nakitten iyi olanı tut, ters oynaklıkla dağıt.")
     return "\n".join(lines)

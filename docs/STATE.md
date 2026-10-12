@@ -29,6 +29,10 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
   görevi (macro-paper) yapılandırılmışsa çalıştırır. Gerçek emir için 3 kilit: mode live + JEVBOT_LIVE=YES + anahtar
   (yalnız işlem, çekim yok, IP kilitli; ortam değişkeni, asla dosyada). DD %20 → 1x, %30 → HALT (--reset-halt).
   06.10: anahtarsız kuru çalışma modunda kuruldu.
+- **committee.v1** (13.10): rutin `jevai-macro-committee` cumartesi 13:00 — 4 analist alt ajanı (makro, akislar,
+  jeopolitik, kripto) + Jev 5 g olasılıkları (gece görevi, rebalansta) → PM eğimi + Türkçe masa notu →
+  `committee` hesabı. Karne `jevbot macro-status`; Telegram 'durum' için `jevbot telegram-listen` (kullanıcı başlatır).
+  Ön kayıt reports/remote/20261013T-committee-prereg.md (13. hafta futility, 26. hafta GO).
 
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |

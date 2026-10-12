@@ -88,13 +88,37 @@ def test_run_once_end_to_end(tmp_path):
         overlay = {"assets": {held[0]: {"tilt": 1, "reason": "x"}, held[-1]: {"tilt": -1, "reason": "y"}}}
         (tmp_path / f"overlay-{res['state']['last_rebalance_week']}.json").write_text(json.dumps(overlay))
         res3 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now + 7_200_000, headlines=None)
-        lw = res3["state"]["llm_weights"]
-        assert res3["state"]["llm_applied"] == res["state"]["last_rebalance_week"] and sum(lw.values()) <= 1 + 1e-9
-        assert "Claude yorumu" in mp.to_text(res3)
+        wk = res["state"]["last_rebalance_week"]
+        lw = res3["state"]["overlay_weights"]["llm"]
+        assert res3["state"]["applied"]["llm"] == wk and sum(lw.values()) <= 1 + 1e-9
+        assert "Claude yorumu" in mp.to_text(res3) and "Komite" not in mp.to_text(res3)
+        committee = {"version": "committee.v1", "week": wk, "analysts": {},
+                     "pm": {"assets": {held[0]: {"tilt": -1, "reason": "z"}}, "note": "not"}}
+        (tmp_path / f"committee-{wk}.json").write_text(json.dumps(committee))
         res4 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px), now=now + 10_800_000, headlines=None)
-        assert "Claude yorumu" not in mp.to_text(res4)                    # applied once per week
+        t4 = mp.to_text(res4)
+        assert "Claude yorumu" not in t4 and "Komite kararı" in t4                 # each applied once per week
+        assert res4["state"]["overlay_weights"]["committee"][held[0]] < w[held[0]]
+        assert set(res4["equity"]) == {"1x", "2x", "llm", "committee"}
+        attr = res4["state"]["accounts"]["1x"]["pnl_sym"]                          # P&L attribution = equity change
+        assert abs(sum(attr.values()) - (res4["equity"]["1x"] - 1000)) < 1e-6
     finally:
         macro.START = old_start
+
+
+def test_jev_views_with_fake_client():
+    class FakeJev:
+        async def models(self):
+            return [{"name": "jev-1.13.0"}, {"name": "laya-x"}]
+
+        async def ask(self, model, state, q):
+            assert model == "jev-1.13.0" and "direction_5d" in q and state["asset"] in ("SPY", "GLD")
+            return {"status": "ok", "probs": {"direction_5d.up": 0.5, "direction_5d.flat": 0.3, "direction_5d.down": 0.2}}
+
+    ctx = {"assets": {"SPY": {"name": "S&P", "vol_60d_pct": 15.0, "headlines": []},
+                      "GLD": {"name": "Altın", "vol_60d_pct": None, "headlines": ["x"]}}}
+    v = mp.jev_views(ctx, client=FakeJev())
+    assert v["model"] == "jev-1.13.0" and v["SPY"]["up"] == 0.5 and v["SPY"]["band_pct"] == 1.1
 
 
 def test_apply_overlay():
