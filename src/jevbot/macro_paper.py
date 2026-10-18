@@ -27,9 +27,12 @@ NAMES = {"SPY": "S&P 500", "QQQ": "Nasdaq", "GLD": "Altın", "SLV": "Gümüş", 
 ACCOUNTS = {"1x": 1.0, "2x": 2.0}
 LLM = "llm"                                             # overlay.v1 account (1x, v1 weights tilted by Claude's view)
 COMMITTEE = "committee"                                 # committee.v1 account (1x, tilted by the PM after analysts)
-OVERLAYS = {LLM: "overlay", COMMITTEE: "committee"}     # account -> weekly tilt file prefix
+COMMITTEE2 = "committee2"                               # committee.v2 account (bolder, forward-looking PM; 1x)
+OVERLAYS = {LLM: "overlay", COMMITTEE: "committee", COMMITTEE2: "committee2"}   # account -> weekly tilt file prefix
 BRAKE = "fren"                                          # macro.brake.v1 account: v1 + 3-sigma daily asset brake
 TILT = {-1: 0.5, 0: 1.0, 1: 1.5}
+TILT2 = {-2: 0.0, -1: 0.5, 0: 1.0, 1: 1.5, 2: 2.0}     # committee.v2
+NEW_POS = 0.05                                          # committee.v2: +1 on an asset v1 does not hold = 5 % from cash
 START_EQUITY = 1000.0
 LOOKBACK = (252,)
 REST = "https://fapi.binance.com"
@@ -200,11 +203,23 @@ def jev_views(ctx: dict[str, Any], client: Any = None) -> dict[str, Any]:
         return {}
 
 
+def apply_overlay2(weights: dict[str, float], tilts: dict[str, int]) -> dict[str, float]:
+    """committee.v2: held assets x {-2: 0, -1: 0.5, 0: 1, +1: 1.5, +2: 2}; an asset v1 does not hold gets 5 % per
+    positive tilt step (early entry before trend confirmation); total capped at 1 (no leverage)."""
+    out = {}
+    for a, w in weights.items():
+        t = int(tilts.get(a, 0))
+        out[a] = w * TILT2.get(t, 1.0) if w > 0 else (NEW_POS * t if t > 0 else 0.0)
+    tot = sum(out.values())
+    return {a: w / tot for a, w in out.items()} if tot > 1 else out
+
+
 def _read_tilts(path: Path, kind: str) -> dict[str, int] | None:
     try:
         d = json.loads(path.read_text(encoding="utf-8"))
-        assets = d["pm"]["assets"] if kind == "committee" else d["assets"]
-        return {a: int(v["tilt"]) for a, v in assets.items() if a in macro.ASSETS and int(v["tilt"]) in TILT}
+        assets = d["pm"]["assets"] if kind in ("committee", "committee2") else d["assets"]
+        valid = TILT2 if kind == "committee2" else TILT
+        return {a: int(v["tilt"]) for a, v in assets.items() if a in macro.ASSETS and int(v["tilt"]) in valid}
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -301,16 +316,18 @@ def run_once(state_dir: Path, *, data_fn: Callable[[], dict] | None = None, bn: 
         tilts = _read_tilts(of, prefix)
         if tilts is None:
             continue
-        lw = apply_overlay(st["weights"], tilts)
+        lw = (apply_overlay2 if name == COMMITTEE2 else apply_overlay)(st["weights"], tilts)
         c = rebalance(st["accounts"][name], lw, 1.0, px)
         applied[name] = wk
         st.setdefault("overlay_weights", {})[name] = lw
         st["notes"][name] = tilts
-        if name == COMMITTEE:
+        if name in (COMMITTEE, COMMITTEE2):
             try:
-                st["committee_note"] = str(json.loads(of.read_text(encoding="utf-8"))["pm"].get("note", ""))[:1500]
+                note = str(json.loads(of.read_text(encoding="utf-8"))["pm"].get("note", ""))[:1500]
+                st["committee_note"] = ((st["committee_note"] + NL + NL) if st["committee_note"] else "") + (
+                    ("🔭 v2: " if name == COMMITTEE2 else "") + note)
             except (OSError, ValueError, KeyError):
-                st["committee_note"] = ""
+                pass
         rows.append({"kind": "overlay", "account": name, "at": now, "week": wk, "tilts": tilts, "weights": lw,
                      "cost": c})
     eqs = {n: _equity(st["accounts"][n], px) for n in st["accounts"]}
@@ -345,9 +362,10 @@ def to_text(res: dict[str, Any]) -> str:
                          f"({p['qty'] * (px[s] - p['entry']):+.2f}$)")
     if res["rebalanced"]:
         lines.append(f"🔄 Haftalık yeniden dengeleme yapıldı (veri {res['latest']:%d.%m}).")
-    labels = {LLM: "🧠 Claude yorumu uygulandı (llm hesabı)", COMMITTEE: "🏛 Komite kararı uygulandı (committee hesabı)"}
+    labels = {LLM: "🧠 Claude yorumu uygulandı (llm hesabı)", COMMITTEE: "🏛 Komite kararı uygulandı (committee hesabı)",
+              COMMITTEE2: "🔭 Komite v2 kararı uygulandı (committee2 hesabı)"}
     for name, tilts in (st.get("notes") or {}).items():
-        t = {1: "↑", -1: "↓"}
+        t = {2: "⇈", 1: "↑", -1: "↓", -2: "✖"}
         moves = [f"{NAMES[a]} {t[v]}" for a, v in tilts.items() if v]
         lines.append(f"{labels[name]}: " + (", ".join(moves) if moves else "değişiklik yok"))
     if st.get("brake_note"):

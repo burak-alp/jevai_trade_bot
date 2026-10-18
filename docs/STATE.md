@@ -36,6 +36,10 @@ Kullanıcı: aylardır sonuç yok, 1-2 günde net karar istiyor. TradFi (hisse) 
 - **macro.brake.v1 GEÇTİ** (13.10): varlık günlük getirisi ≤ −3σ (60 g) → dengelemeye kadar nakit. T: Sharpe 1.20 (v1 1.09),
   maks DD %10.9 (v1 %16.1); 2.5–4σ arası sağlam; günlük dengeleme daha kötü (0.97). Paper'da `fren` hesabı (ortak kod
   `macro.brake_hits`). Olay nöbeti rutini `jevai-olay-nobeti` 09/15/21 → alert-*.json → Telegram dinleyicisi iletir (yalnız bilgi).
+- **committee.v2** (18.10): rutin `jevai-macro-committee-v2` cumartesi 14:00, v1 analist olguları üzerinde ileri görüşlü PM:
+  senaryolar, varlık başına p_up (Brier karnesi), eğim −2..+2, tutulmayan varlığa %5/%10 erken giriş, kaldıraçsız →
+  `committee2` hesabı. Ön kayıt reports/remote/20261018T-committee2-prereg.md. 1. hafta analizi: 1x −%1.5 (TÜFE/AI satışı),
+  v1 ve llm eğimleri 2 hafta 0; gece görevi 4 gece kaçtı (PC kapalı) → canlı öncesi sunucu şart.
 
 ## Kapanan hipotezler (ön kayıtlı, hepsi GEÇMEDİ — eşik gevşetme yok)
 | hipotez | pencere | sonuç |

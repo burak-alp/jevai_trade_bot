@@ -99,7 +99,7 @@ def test_run_once_end_to_end(tmp_path):
         t4 = mp.to_text(res4)
         assert "Claude yorumu" not in t4 and "Komite kararı" in t4                 # each applied once per week
         assert res4["state"]["overlay_weights"]["committee"][held[0]] < w[held[0]]
-        assert set(res4["equity"]) == {"1x", "2x", "llm", "committee", "fren"}
+        assert set(res4["equity"]) == {"1x", "2x", "llm", "committee", "committee2", "fren"}
         attr = res4["state"]["accounts"]["1x"]["pnl_sym"]                          # P&L attribution = equity change
         assert abs(sum(attr.values()) - (res4["equity"]["1x"] - 1000)) < 1e-6
     finally:
@@ -167,3 +167,12 @@ def test_brake_account_freezes_crashed_asset(tmp_path):
         assert not r3["state"]["brake_note"]                                         # same day not re-checked
     finally:
         macro.START = old
+
+
+def test_apply_overlay2_bold_and_early_entry():
+    w = {"SPY": 0.3, "GLD": 0.2, "TLT": 0.0, "BTC-USD": 0.0, "QQQ": 0.1}
+    o = mp.apply_overlay2(w, {"SPY": 2, "GLD": -2, "TLT": 1, "BTC-USD": 2, "QQQ": -1})
+    assert o == pytest.approx({"SPY": 0.6, "GLD": 0.0, "TLT": 0.05, "BTC-USD": 0.10, "QQQ": 0.05})
+    big = mp.apply_overlay2({"SPY": 0.5, "QQQ": 0.4, "TLT": 0.0}, {"SPY": 2, "QQQ": 2, "TLT": 2})
+    assert abs(sum(big.values()) - 1) < 1e-12                                   # never leveraged
+    assert mp.apply_overlay2(w, {"TLT": -2})["TLT"] == 0.0                      # negative on unheld: no short

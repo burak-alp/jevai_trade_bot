@@ -46,6 +46,8 @@ def test_status_scorecard_two_weeks(tmp_path):
             "week": wk, "analysts": {"makro": {"assets": {held[0]: {"view": 1}}}},
             "pm": {"assets": {held[0]: {"tilt": 1}}, "note": "Fed sabit; altın güçlü."}}))
         (tmp_path / f"gpt-{wk}.json").write_text(json.dumps({"assets": {held[0]: {"view": -1}}}))
+        (tmp_path / f"committee2-{wk}.json").write_text(json.dumps({"pm": {"assets": {
+            held[0]: {"tilt": 2, "p_up": 0.8}, held[-1]: {"tilt": 0, "p_up": 0.5}}, "note": "v2"}}))
         px2 = dict(px)
         px2[mp.SYMBOLS[held[0]][0]] = 110.0                                  # the favoured asset rises 10 %
         r2 = mp.run_once(tmp_path, data_fn=lambda: data, bn=FakeBn(px2), now=t0 + 7 * 86_400_000, headlines=None)
@@ -53,6 +55,9 @@ def test_status_scorecard_two_weeks(tmp_path):
         sc = md.scorecard(tmp_path)
         assert sc["analist:makro"]["hit"] == 1.0 and abs(sc["komite (PM)"]["mean_bps"] - 1000) < 1e-6
         assert sc["gpt"]["hit"] == 0.0 and abs(sc["gpt"]["mean_bps"] + 1000) < 1e-6
+        assert sc["komite v2 (PM)"]["n"] == 1 and sc["komite v2 (PM)"]["hit"] == 1.0
+        b = md.brier(tmp_path)                                  # held[0] rose (p 0.8): 0.04; held[-1] flat (0 -> down)
+        assert b["n"] == 2 and abs(b["brier"] - (0.04 + 0.25) / 2) < 1e-9
         text = md.status_text(tmp_path, px2)
         assert "Varlık sınıfı" in text and "Fed sabit" in text and "Karne" in text
         s = md.status(tmp_path, px2)

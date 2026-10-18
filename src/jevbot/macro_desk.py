@@ -49,6 +49,11 @@ def member_views(state_dir: Path, week: str) -> dict[str, dict[str, int]]:
         for name, an in (c.get("analysts") or {}).items():
             views[f"analist:{name}"] = {a: int(v.get("view", 0)) for a, v in (an.get("assets") or {}).items()}
         views["komite (PM)"] = {a: int(v.get("tilt", 0)) for a, v in (c.get("pm", {}).get("assets") or {}).items()}
+    c2 = d / f"committee2-{week}.json"
+    if c2.exists():
+        views["komite v2 (PM)"] = {a: (1 if int(v.get("tilt", 0)) > 0 else -1 if int(v.get("tilt", 0)) < 0 else 0)
+                                   for a, v in (json.loads(c2.read_text(encoding="utf-8")).get("pm", {})
+                                                .get("assets") or {}).items()}
     of = d / f"overlay-{week}.json"
     if of.exists():
         views["claude (llm)"] = {a: int(v.get("tilt", 0))
@@ -79,6 +84,20 @@ def scorecard(state_dir: Path) -> dict[str, dict[str, float]]:
             for m, x in acc.items() if x}
 
 
+def brier(state_dir: Path) -> dict[str, float] | None:
+    """committee.v2 p_up forecasts vs. realized up/down to the next rebalance: Brier score (0.25 = coin flip)."""
+    errs = []
+    for wk, rets in weekly_returns(state_dir).items():
+        f = Path(state_dir) / f"committee2-{wk}.json"
+        if not f.exists():
+            continue
+        for a, v in (json.loads(f.read_text(encoding="utf-8")).get("pm", {}).get("assets") or {}).items():
+            p = v.get("p_up")
+            if a in rets and isinstance(p, (int, float)) and 0 <= p <= 1:
+                errs.append((p - (1.0 if rets[a] > 0 else 0.0)) ** 2)
+    return {"n": len(errs), "brier": sum(errs) / len(errs)} if errs else None
+
+
 def status(state_dir: Path, px: dict[str, float]) -> dict[str, Any]:
     st = json.loads((Path(state_dir) / "state.json").read_text(encoding="utf-8"))
     eq = {}
@@ -96,7 +115,8 @@ def status(state_dir: Path, px: dict[str, float]) -> dict[str, Any]:
                         "weight": sum(st["weights"].get(a, 0.0) for a in assets)}
     explained = sum(attr.values())
     return {"st": st, "equity": eq, "classes": classes, "cash_pnl": attr.get("CASH", 0.0),
-            "unattributed": eq["1x"] - START_EQUITY - explained, "score": scorecard(state_dir)}
+            "unattributed": eq["1x"] - START_EQUITY - explained, "score": scorecard(state_dir),
+            "brier": brier(state_dir)}
 
 
 def latest_note(state_dir: Path) -> tuple[str | None, str | None]:
@@ -131,5 +151,8 @@ def status_text(state_dir: Path, px: dict[str, float]) -> str:
         lines.append("🎯 Karne (biten haftalar; isabet / ort. getiri):")
         for m, v in sorted(s["score"].items(), key=lambda kv: -kv[1]["mean_bps"]):
             lines.append(f"  {m}: {v['n']} görüş, isabet %{v['hit'] * 100:.0f}, {v['mean_bps']:+.0f} bps")
+    if s["brier"]:
+        b = s["brier"]
+        lines.append(f"🔭 v2 ileri görüş (Brier, düşük iyi; yazı-tura 0.25): {b['brier']:.3f} ({b['n']} tahmin)")
     lines.append("Sanal hesap; gerçek para yok.")
     return "\n".join(lines)
